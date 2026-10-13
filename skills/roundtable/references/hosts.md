@@ -6,15 +6,20 @@ agent with a shell tool. Install the skill for every agent with
 
 ## Running from each host
 
-| Host | How to run a council that takes minutes |
+Every host starts the council detached, because a council outlives tool timeouts (Claude Code stops
+even `run_in_background` commands at their timeout):
+
+```bash
+nohup python3 $S run --brief brief.md > "$TMPDIR/rt.log" 2>&1 &
+sleep 2; RUN=$(head -1 "$TMPDIR/rt.log")     # the run directory is the first line
+python3 $S status "$RUN"                     # STARTING / RUNNING / DONE / FAILED
+```
+
+| Host | Waiting |
 |---|---|
-| Claude Code | Bash `run_in_background: true`; you get a notification on exit |
-| Codex CLI | `nohup python3 $S run ... > rt.log 2>&1 &` then `python3 $S status` until `DONE` |
-| Grok CLI | same as Codex |
-| Antigravity (`agy`) | same as Codex |
-| OpenCode | same as Codex |
-| pi | same as Codex |
-| Orca | either of the above inside the agent's terminal, or run `python3 $S run ...` in its own Orca terminal so the user can watch `progress.log` |
+| Claude Code | a background `until python3 $S status "$RUN" \| grep -qE '^(DONE\|FAILED)'; do sleep 30; done`, re-armed if it times out |
+| Codex CLI, Grok CLI, Antigravity, OpenCode, pi | call `status "$RUN"` every 1-2 minutes |
+| Orca | either of the above, or run the council in its own Orca terminal so the user can watch `progress.log` |
 
 `$S` = `<skill dir>/scripts/roundtable.py`. `python3 $S doctor` shows which seats this host can fill.
 

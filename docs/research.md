@@ -87,6 +87,17 @@ Ghi chú CLI rút ra khi thử:
 Phiên thật đầu tiên (brief: skill này nên nằm ở repo riêng hay trong pi-skill) → 4/4 phiếu hợp lệ chọn
 repo riêng; Fable/Opus/Codex dẫn README vercel-labs/skills và tài liệu GitHub Actions làm bằng chứng.
 
+### Hội đồng tự review chính nó (`--mode review --workspace <repo>`)
+
+| Lần | Commit | Phiếu hợp lệ | Kết quả | Hội đồng tìm ra (đều có tái hiện bằng lệnh) |
+|---|---|---|---|---|
+| run2 | 86d73a5 | 5/6 (grok invalid) | CHANGES 5/5 | plan mode của claude nhồi lệnh "spawn agent/ExitPlanMode"; luật count bỏ qua điểm khi hoà; ratings dạng list làm sập cả phiên; FACT không nguồn vẫn được tính; parser nhặt object lồng; status kẹt RUNNING; tally mất cờ workspace |
+| run3 | b53803e | 6/6 | CHANGES 6/6 | status báo DONE của phiên cũ khi phiên mới đang khởi động; allowlist claude cho chạy code (`unittest`, `rg --pre`, `git diff --output`); agy chỉ read-only bằng prompt; sandbox nằm trong thư mục run nên đọc được bảng label (phá ẩn danh); ratings áp lên phiếu đã đổi phe; INFERENCE không nguồn; Dissent sai khi TIE; `fill()` thay lồng; không dọn tiến trình khi bị kill |
+
+Ngoài lỗi code, chính lúc chạy thật mới lộ ra: codex mặc định có hơn 100 tool `codex_apps`
+(deploy site, chia sẻ trang, Datadog) cùng computer use, còn claude có MCP đăng bài ra ngoài
+(glasshelf, Claude Docs). Ghế hội đồng giờ bị tắt hết các tool này.
+
 ## 5. Việc còn mở
 
 - Orca transport: mỗi ghế là một terminal agent trong Orca (xem được TUI, chạy được ghế trên máy khác).

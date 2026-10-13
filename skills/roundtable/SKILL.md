@@ -57,10 +57,12 @@ commands at their timeout). On every host, start it detached and poll:
 
 ```bash
 nohup python3 $S run --brief brief.md > "$TMPDIR/rt.log" 2>&1 &
-python3 $S status        # every 1-2 min: RUNNING / DONE / FAILED (runner died: read rt.log)
+sleep 2; RUN=$(head -1 "$TMPDIR/rt.log")   # first line = run directory
+python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / FAILED (runner died: read rt.log)
 ```
 
-In Claude Code you may wait with a background `until python3 $S status | grep -qE '^(DONE|FAILED)'; do sleep 30; done`
+Always pass `$RUN`: a bare `status` shows the newest run, which may be someone else's. In Claude Code
+you may wait with a background `until python3 $S status "$RUN" | grep -qE '^(DONE|FAILED)'; do sleep 30; done`
 (re-arm it if it times out) instead of polling by hand.
 
 Exit code 3 / a WARNING banner in decision.md means files in `--workspace` changed while the council
@@ -94,7 +96,9 @@ confirmation rules still apply. If the user asks for your view, give it separate
   gemini 3.7 flash, next-newest free OpenCode model) on quota / unavailable / error / timeout.
   Still failing, or CLI missing: the seat is **UNATTENDED**.
 - Round 1 blind; round 2+ shows every position anonymized (M1, M2...) and asks for evidence ratings
-  (0-2), rebuttals and a fresh vote. Ballots without FACT/INFERENCE evidence do not count.
+  (0-2), rebuttals and a fresh vote. Ballots without sourced FACT/INFERENCE evidence do not count.
+- Seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
+  (codex, grok), a snapshot copy of the workspace (agy), MCP/app tools removed.
 - Weight = seat weight x (0.5 + 0.5 x mean peer rating, self-ratings ignored). Highest weighted
   score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots: NO QUORUM.
 - A seat refuses to convene a council itself (`ROUNDTABLE_SEAT` guard).

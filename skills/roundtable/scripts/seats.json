@@ -10,11 +10,9 @@
       "argv": ["-p", "--model", "{model}", "--permission-mode", "dontAsk", "--strict-mcp-config", "--disable-slash-commands",
                "--tools", "Read,Grep,Glob,WebSearch,WebFetch,Bash",
                "--allowedTools", "Read", "Grep", "Glob", "WebSearch", "WebFetch",
-               "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)", "Bash(rg:*)",
-               "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)", "Bash(git blame:*)", "Bash(git ls-files:*)",
-               "Bash(python3 -m unittest:*)"],
+               "Bash(ls:*)", "Bash(wc:*)", "Bash(git status:*)", "Bash(git ls-files:*)"],
       "stdin": true,
-      "_note": "plan mode injects 'spawn agents, ExitPlanMode' instructions; dontAsk + read-only allowlist denies everything else; --strict-mcp-config drops MCP servers that publish externally"
+      "_note": "plan mode injects 'spawn agents, ExitPlanMode' instructions; dontAsk denies anything not allowlisted. Read/Grep/Glob replace cat/rg; no git diff/log (--output writes), no rg (--pre runs), no code execution. --strict-mcp-config drops MCP servers that publish externally"
     },
     "codex": {
       "bin": "codex",
@@ -32,7 +30,8 @@
     "agy": {
       "bin": "agy",
       "argv": ["--model", "{model}", "--sandbox", "--dangerously-skip-permissions", "--disable-slash-commands", "-p={prompt}"],
-      "_note": "headless agy auto-denies read_url etc.; skip-permissions inside --sandbox, read-only is enforced by the prompt + workspace change check"
+      "isolate": true,
+      "_note": "headless agy auto-denies read_url, so permissions are skipped; it cannot be made read-only, so with --workspace it gets a snapshot copy (isolate) instead of the real checkout"
     },
     "opencode": {
       "bin": "opencode",

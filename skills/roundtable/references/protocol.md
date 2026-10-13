@@ -9,18 +9,21 @@
 
   | CLI | Read-only by | Outward tools removed |
   |---|---|---|
-  | claude | `--permission-mode dontAsk` + allowlist (Read/Grep/Glob/Web*, read-only Bash, `python3 -m unittest`) | `--strict-mcp-config` (no MCP servers), `--tools` without Agent |
+  | claude | `--permission-mode dontAsk` + allowlist: Read/Grep/Glob/WebSearch/WebFetch, `ls`, `wc`, `git status`, `git ls-files` (no code execution; no `rg`/`git diff`, whose `--pre`/`--output` run or write) | `--strict-mcp-config` (no MCP servers), `--tools` without Agent |
   | codex | `-s read-only` sandbox (kernel) | `--disable apps computer_use browser_use` |
   | grok | `--sandbox read-only` (kernel; temp dirs stay writable) | no MCP configured |
-  | agy | `--sandbox` (terminal only) + prompt; skip-permissions so headless web reads work | no MCP configured |
+  | agy | cannot be made read-only (headless needs skip-permissions for web reads), so `"isolate": true`: with `--workspace` it works in a snapshot copy of the checkout's tracked + untracked files | no MCP configured |
   | opencode | `--agent plan` | no MCP configured |
 
   Plan modes are avoided on claude and grok: they inject "write a plan, exit plan mode" instructions
   and end headless runs before the ballot. Each call gets `ROUNDTABLE_SEAT=<id>` so a seat that loads
-  this skill cannot start a nested council. With `--workspace`, the script fingerprints the git
-  checkout (HEAD, status, diff, untracked file hashes) before and after; any change gives a WARNING
-  banner and exit code 3. Secret-looking strings that seats quote are redacted before the
-  cross-exam dossier goes to the other vendors.
+  this skill cannot start a nested council. With `--workspace`, the script fingerprints it before and
+  after (git checkout, also from a subdirectory: HEAD, status, diff, untracked file hashes; otherwise
+  path/size/mtime of every file); any change gives a WARNING banner and exit code 3. Secret-looking
+  strings that seats quote are redacted before the cross-exam dossier goes to the other vendors.
+- **Isolation of the anonymity**: seat working directories are fresh temp dirs outside the run
+  directory, and `rN_labels.json` is written only after round N has finished.
+- **Cleanup**: SIGINT/SIGTERM/exit kill every running seat's process group.
 
 ## Rounds
 
@@ -33,7 +36,8 @@ Default 2 rounds. Each cross-exam round is a new session, so a member does not r
 earlier answer; the anonymity is real, not a request to "please ignore names".
 
 Evidence types: `FACT` (verified, with a source), `INFERENCE` (reasoned from cited facts),
-`ASSUMPTION` (unverified). A ballot needs at least one FACT or INFERENCE item to count
+`ASSUMPTION` (unverified). FACT or INFERENCE items without a source are downgraded to ASSUMPTION.
+A ballot needs at least one FACT or INFERENCE item to count
 (`no_evidence` otherwise). A vote that is not one of the option ids is `invalid`.
 
 ## Seat lifecycle
@@ -59,7 +63,8 @@ CLI missing on PATH -> UNATTENDED immediately
 ## Tally
 
 ```
-peer(seat)   = mean of the 0-2 ratings other members gave it in the last cross-exam (1.0 if none)
+peer(seat)   = mean of the 0-2 ratings other members gave it in the last cross-exam (1.0 if none,
+               and 1.0 if the seat switched vote after the position they rated)
 weight(seat) = seat.weight x (0.5 + 0.5 x peer)          -> 0.5x .. 1.5x
 score(opt)   = sum of weight over valid ballots for opt
 verdict      = argmax score                               (decision_rule "count": argmax votes, score breaks ties)

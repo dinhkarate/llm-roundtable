@@ -51,6 +51,14 @@ class ParseTest(unittest.TestCase):
         r = rt.classify({"rc": 0, "text": '{"vote": "A", "evidence": [{"type": "FACT", "claim": "x", "source": ""}]}', "noise": ""}, ["A", "B"])
         self.assertEqual(r["status"], "no_evidence")
 
+    def test_unsourced_inference_is_an_assumption(self):
+        r = rt.classify({"rc": 0, "text": '{"vote": "A", "evidence": [{"type": "INFERENCE", "claim": "x"}]}', "noise": ""}, ["A", "B"])
+        self.assertEqual(r["status"], "no_evidence")
+
+    def test_fill_is_single_pass(self):
+        out = rt.fill("-p={prompt}", {"model": "m", "prompt": "see {out_file}", "prompt_file": "/pf", "out_file": "/of"})
+        self.assertEqual(out, "-p=see {out_file}")
+
     def test_classify_quota_and_unavailable(self):
         q = rt.classify({"rc": 1, "text": "", "noise": "Error: rate limit exceeded"}, ["A", "B"])
         u = rt.classify({"rc": 1, "text": "", "noise": "Couldn't set model: unknown model id"}, ["A", "B"])
@@ -96,10 +104,18 @@ class TallyTest(unittest.TestCase):
         self.assertEqual((t["verdict"], t["valid_votes"]), ("B", 1))
 
 
+def make_repo():
+    ws = Path(tempfile.mkdtemp())
+    if subprocess.run(["git", "init", "-q", str(ws)], capture_output=True).returncode != 0:
+        raise unittest.SkipTest("git init not possible here")
+    return ws
+
+
 class EndToEndTest(unittest.TestCase):
-    def run_council(self, seats, presets, extra=()):
+    def run_council(self, seats, presets, extra=(), expect_rc=(0, 3)):
         tmp = Path(tempfile.mkdtemp())
-        cfg = {"adapters": {"fake": {"bin": sys.executable, "argv": [str(FAKE), "{model}"], "stdin": True}},
+        cfg = {"adapters": {"fake": {"bin": sys.executable, "argv": [str(FAKE), "{model}"], "stdin": True},
+                            "fake-isolated": {"bin": sys.executable, "argv": [str(FAKE), "{model}"], "stdin": True, "isolate": True}},
                "seats": seats, "presets": presets}
         (tmp / "cfg.json").write_text(json.dumps(cfg))
         (tmp / "brief.md").write_text("# Pick one\n\nWhich?\n\n## Options\n- A: first\n- B: second\n")
@@ -108,7 +124,7 @@ class EndToEndTest(unittest.TestCase):
         p = subprocess.run([sys.executable, str(SCRIPT), "--config", str(tmp / "cfg.json"), "run", "--brief", str(tmp / "brief.md"),
                             "--seats", "t", "--out", str(tmp / "run"), "--seed", "1", "--timeout", "60", *extra],
                            capture_output=True, text=True, env=env)
-        self.assertIn(p.returncode, (0, 3), p.stderr)
+        self.assertIn(p.returncode, expect_rc, p.stderr)
         return json.loads((tmp / "run/result.json").read_text()), (tmp / "run/decision.md").read_text()
 
     def test_fallback_unattended_and_fable_tiebreak(self):
@@ -139,6 +155,8 @@ class EndToEndTest(unittest.TestCase):
         self.assertIn("Changed votes", md)
         # s3 voted B in round 1 and was rated 0 by the others (self-rating ignored)
         self.assertEqual(res["seats"]["s3"]["ratings_received"], [0, 0])
+        # s2 was rated on its round-1 B and then switched to A: its rating must not weigh the new vote
+        self.assertEqual(res["seats"]["s2"]["ratings_received"], [])
 
     def test_no_quorum(self):
         seats = [{"id": "a", "adapter": "fake", "models": ["quota"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
@@ -147,12 +165,33 @@ class EndToEndTest(unittest.TestCase):
         self.assertIn("NO QUORUM", md)
 
     def test_workspace_write_is_flagged(self):
-        ws = Path(tempfile.mkdtemp())
-        subprocess.run(["git", "init", "-q", str(ws)], check=True)
+        ws = make_repo()
         seats = [{"id": "a", "adapter": "fake", "models": ["write-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
-        res, md = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws)])
+        res, md = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws / ".")], expect_rc=(3,))
         self.assertTrue(res["workspace_changed"])
         self.assertIn("WARNING", md)
+
+    def test_subdirectory_workspace_is_watched(self):
+        ws = make_repo()
+        (ws / "sub").mkdir()
+        seats = [{"id": "a", "adapter": "fake", "models": ["write-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
+        res, _ = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws / "sub")], expect_rc=(3,))
+        self.assertTrue(res["workspace_changed"])
+
+    def test_isolated_seat_writes_only_its_snapshot(self):
+        ws = make_repo()
+        (ws / "file.txt").write_text("x")
+        seats = [{"id": "a", "adapter": "fake-isolated", "models": ["write-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
+        res, md = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws)], expect_rc=(0,))
+        self.assertFalse(res["workspace_changed"])
+        self.assertFalse((ws / "written-by-seat.txt").exists())
+
+    def test_tie_without_tiebreak_has_no_dissent_section(self):
+        seats = [{"id": "x", "adapter": "fake", "models": ["vote-A"]}, {"id": "y", "adapter": "fake", "models": ["vote-B"]}]
+        res, md = self.run_council(seats, {"t": ["x", "y"]}, ["--rounds", "1"])
+        self.assertIsNone(res["tally"]["verdict"])
+        self.assertIn("TIE", md)
+        self.assertNotIn("## Dissent", md)
 
     def test_missing_ballot_gets_one_nudge(self):
         seats = [{"id": "a", "adapter": "fake", "models": ["lazy-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]

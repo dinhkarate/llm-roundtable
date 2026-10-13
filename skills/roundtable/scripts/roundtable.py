@@ -15,6 +15,7 @@ Subcommands:
 Python 3.9+, stdlib only.
 """
 import argparse
+import atexit
 import concurrent.futures as cf
 import datetime as dt
 import json
@@ -25,6 +26,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.request
@@ -69,6 +71,27 @@ FALLBACK_STATUSES = {"quota", "unavailable", "error", "timeout"}
 EVIDENCE_TYPES = {"FACT", "INFERENCE"}
 
 _log_lock = threading.Lock()
+_live = set()  # Popen objects of running seats, reaped on exit/signal
+
+
+def _kill_tree(p):
+    try:
+        if os.name != "nt":
+            os.killpg(p.pid, signal.SIGKILL)  # agent CLIs spawn children; kill the whole tree
+        else:
+            p.kill()
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def reap_all(*_):
+    for p in list(_live):
+        _kill_tree(p)
+
+
+def _on_signal(signum, _frame):
+    reap_all()
+    sys.exit(128 + signum)
 
 
 # ---------------------------------------------------------------- config
@@ -123,10 +146,14 @@ def opencode_free_models(exclude):
     if not shutil.which("opencode"):
         return []
     listed = []
-    # the background service sometimes answers with an empty list while it warms up
-    for argv in (["opencode", "models"], ["opencode", "models", "--standalone"]):
+    # the background service sometimes answers with an empty list for a few seconds (e.g. right after
+    # an `opencode run` exits); --standalone is no help, it lists no providers at all
+    for attempt in range(4):
+        if attempt:
+            time.sleep(3)
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=90).stdout
+            out = subprocess.run(["opencode", "models"], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                 stdin=subprocess.DEVNULL, timeout=90).stdout
         except (subprocess.SubprocessError, OSError):
             continue
         listed = [l.strip() for l in out.splitlines() if l.strip().startswith("opencode/")]
@@ -200,10 +227,12 @@ def log(run_dir, msg):
         print(line, file=sys.stderr, flush=True)
 
 
+PLACEHOLDER_RE = re.compile(r"\{(model|prompt|prompt_file|out_file)\}")
+
+
 def fill(template, values):
-    for k, v in values.items():
-        template = template.replace("{" + k + "}", v)
-    return template
+    """One pass, so a placeholder inside a substituted value (e.g. the prompt text) stays literal."""
+    return PLACEHOLDER_RE.sub(lambda m: values[m.group(1)], template)
 
 
 def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
@@ -225,16 +254,16 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
     try:
         p = subprocess.Popen(argv, cwd=str(cwd), stdin=stdin, stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, env=env, text=True, encoding="utf-8", errors="replace", **kw)
+        _live.add(p)
         try:
             out, err = p.communicate(timeout=timeout)
             rc = p.returncode
         except subprocess.TimeoutExpired:
-            if os.name != "nt":
-                os.killpg(p.pid, signal.SIGKILL)  # agent CLIs spawn children; kill the whole tree
-            else:
-                p.kill()
+            _kill_tree(p)
             out, err = p.communicate()
             rc = None
+        finally:
+            _live.discard(p)
     finally:
         if stdin is not subprocess.DEVNULL:
             stdin.close()
@@ -295,8 +324,8 @@ def normalize_ballot(obj, option_ids):
             continue
         etype = str(e.get("type", "ASSUMPTION")).strip().upper()
         source = str(e.get("source", "") or "").strip()
-        if etype == "FACT" and not source:
-            etype = "ASSUMPTION"  # a fact nobody can check is an assumption
+        if etype in EVIDENCE_TYPES and not source:
+            etype = "ASSUMPTION"  # a fact or inference nobody can trace is an assumption
         evidence.append({"type": etype, "claim": str(e["claim"]).strip(), "source": source})
     ratings = {}
     raw = obj.get("ratings")
@@ -584,31 +613,49 @@ def cmd_run(args):
     brief = Path(args.brief).read_text(encoding="utf-8") if args.brief != "-" else sys.stdin.read()
     options = parse_options(args, brief)
     option_ids = [o for o, _ in options]
-    hits = secret_scan(brief)
+    hits = secret_scan(brief + "\n" + options_block(options) + "\n" + (args.title or ""))
     if hits and not args.allow_sensitive:
-        raise SystemExit("brief looks like it contains secrets (%s). Remove them; the brief is sent to several vendors. "
-                         "Use --allow-sensitive only if these are false positives." % ", ".join(hits))
-    seats, skipped = resolve_seats(cfg, (args.seats or "full").split(","), private=args.private)
+        raise SystemExit("brief or options look like they contain secrets (%s). Remove them; they are sent to several "
+                         "vendors. Use --allow-sensitive only if these are false positives." % ", ".join(hits))
     rounds = max(1, min(3, args.rounds or cfg.get("rounds", 2)))
     timeout = args.timeout or cfg.get("timeout", 900)
     title = args.title or (brief.strip().splitlines() or ["decision"])[0].lstrip("# ").strip()
     run_dir = Path(args.out).resolve() if args.out else RUNS_DIR / ("%s-%s" % (dt.datetime.now().strftime("%Y%m%d-%H%M%S"), slugify(title)))
     run_dir.mkdir(parents=True, exist_ok=True)
+    started = dt.datetime.now().isoformat(timespec="seconds")
+    # meta first, so `status` sees this run (STARTING) while seats resolve (opencode discovery can take a while)
+    (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps({"title": title, "started": started, "pid": os.getpid()}))
+    print(str(run_dir), flush=True)
     (run_dir / "brief.md").write_text(encoding="utf-8", data=brief)
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, _on_signal)
+    atexit.register(reap_all)
+    seats, skipped = resolve_seats(cfg, (args.seats or "full").split(","), private=args.private)
     workspace = Path(args.workspace).resolve() if args.workspace else None
     meta = {"title": title, "options": options, "rounds": rounds, "timeout": timeout, "mode": args.mode,
             "workspace": str(workspace) if workspace else None, "private": args.private,
             "decision_rule": cfg.get("decision_rule", "weighted"), "quorum": cfg.get("quorum", 2),
-            "seats": seats, "skipped": skipped, "started": dt.datetime.now().isoformat(timespec="seconds"), "pid": os.getpid()}
+            "seats": seats, "skipped": skipped, "started": started, "pid": os.getpid()}
     (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
-    print(str(run_dir), flush=True)
     log(run_dir, "council: %s | options %s | rounds %d" % (", ".join(s["id"] for s in seats), ",".join(option_ids), rounds))
 
-    def seat_cwd(seat_id, rnd):
-        if workspace:
+    # seat working dirs live outside run_dir so a seat cannot read the label map or other seats' transcripts
+    scratch = Path(tempfile.mkdtemp(prefix="roundtable-"))
+    atexit.register(shutil.rmtree, str(scratch), True)
+    snapshot = {}
+
+    def seat_cwd(seat):
+        isolate = cfg["adapters"].get(seat["adapter"], {}).get("isolate")
+        if workspace and not isolate:
             return workspace
-        d = run_dir / "sandbox" / seat_id
-        d.mkdir(parents=True, exist_ok=True)
+        d = scratch / seat["id"]
+        if not d.exists():
+            d.mkdir(parents=True)
+            if workspace and isolate:
+                ok = snapshot_workspace(workspace, d)
+                snapshot[seat["id"]] = bool(ok)
+                log(run_dir, "%s reads a snapshot copy of the workspace (its CLI cannot be made read-only)%s"
+                    % (seat["id"], "" if ok else ": snapshot unavailable (not git or too large), seat sees no files"))
         return d
 
     state = {s["id"]: {"seat": s, "weight": s.get("weight", 1.0), "tiebreak": bool(s.get("tiebreak")),
@@ -619,7 +666,7 @@ def cmd_run(args):
     # round 1: independent
     p1 = prompt_round1(brief, options, workspace, len(seats))
     with cf.ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
-        futs = {ex.submit(sit, s, cfg, p1, run_dir / "r1", seat_cwd(s["id"], 1), timeout, option_ids, run_dir, 1): s for s in seats}
+        futs = {ex.submit(sit, s, cfg, p1, run_dir / "r1", seat_cwd(s), timeout, option_ids, run_dir, 1): s for s in seats}
         for f in cf.as_completed(futs):
             s = futs[f]
             res = f.result()
@@ -640,7 +687,7 @@ def cmd_run(args):
         rng.shuffle(speaking)
         labels = {sid: "M%d" % (i + 1) for i, sid in enumerate(speaking)}
         positions = [(labels[sid], state[sid]["ballot"]) for sid in speaking]
-        (run_dir / ("r%d_labels.json" % rnd)).write_text(encoding="utf-8", data=json.dumps(labels, indent=2))
+        rated_vote = {sid: state[sid]["ballot"]["vote"] for sid in speaking}
         prompt = prompt_cross(brief, options, workspace, positions, rnd, rounds)
         if secret_scan(dossier(positions)):
             log(run_dir, "r%d: redacted secret-looking strings that seats quoted, before sharing them" % rnd)
@@ -648,19 +695,19 @@ def cmd_run(args):
         active = [s for s in seats if state[s["id"]].get("status") != "unattended"]
         results = {}
         with cf.ThreadPoolExecutor(max_workers=max(1, len(active))) as ex:
-            futs = {ex.submit(sit, s, cfg, prompt, run_dir / ("r%d" % rnd), seat_cwd(s["id"], rnd), timeout, option_ids,
+            futs = {ex.submit(sit, s, cfg, prompt, run_dir / ("r%d" % rnd), seat_cwd(s), timeout, option_ids,
                               run_dir, rnd, state[s["id"]]["level"]): s for s in active}
             for f in cf.as_completed(futs):
                 results[futs[f]["id"]] = f.result()
+        # written only after the round, so no seat could read it while voting
+        (run_dir / ("r%d_labels.json" % rnd)).write_text(encoding="utf-8", data=json.dumps(labels, indent=2))
         last_ratings = {}
         for sid, res in results.items():
             st = state[sid]
             st["history"].append(slim(res))
-            if res["status"] in ("ok", "no_evidence", "invalid"):
-                st["level"] = res.get("level", st["level"])
-                st["model"] = res.get("model", st.get("model"))
             if res["status"] == "ok" or (res["status"] == "no_evidence" and st.get("status") != "ok"):
                 st["status"], st["ballot"] = res["status"], res["ballot"]
+                st["model"], st["level"] = res.get("model", st.get("model")), res.get("level", st["level"])
                 last_ratings[sid] = res["ballot"].get("ratings", {})
             else:
                 st["carried"] = "r%d %s; kept previous ballot" % (rnd, res["status"])
@@ -675,6 +722,11 @@ def cmd_run(args):
                 target = by_label.get(lab)
                 if target and target != rater:
                     state[target]["ratings_received"].append(val)
+        for sid, st in state.items():
+            # ratings judged the position shown in the dossier; a seat that then switched sides starts neutral
+            if st["ratings_received"] and st.get("ballot") and st["ballot"].get("vote") != rated_vote.get(sid):
+                st["ratings_received"] = []
+                st["ratings_note"] = "switched vote after being rated; weight neutral"
 
     if fp_before is not None and workspace_fingerprint(workspace) != fp_before:
         meta["workspace_changed"] = True
@@ -684,22 +736,71 @@ def cmd_run(args):
     return 3 if meta.get("workspace_changed") else 0
 
 
-def workspace_fingerprint(ws):
-    """HEAD + status + tracked diff + hashes of untracked files, to catch a seat that broke the read-only rule.
-    Ignored files (caches, __pycache__) are not covered."""
-    if not ws or not (ws / ".git").exists():
-        return None
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", "dist", "build", "target"}
 
-    def git(*a):
-        return subprocess.run(["git", "-C", str(ws)] + list(a), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
 
+def git_toplevel(ws):
     try:
-        untracked = [l for l in git("ls-files", "-o", "--exclude-standard", "-z").split("\0") if l]
-        hashes = subprocess.run(["git", "-C", str(ws), "hash-object", "--stdin-paths"], input="\n".join(untracked),
-                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout if untracked else ""
-        return "\0".join([git("rev-parse", "HEAD"), git("status", "--porcelain", "-uall"), git("diff", "HEAD"), hashes])
+        r = subprocess.run(["git", "-C", str(ws), "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=60)
     except (subprocess.SubprocessError, OSError):
         return None
+    return Path(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip() else None
+
+
+def workspace_fingerprint(ws):
+    """Detect a seat that broke the read-only rule. Git checkout (also from a subdirectory): HEAD + status +
+    tracked diff + hashes of untracked files. Otherwise: path/size/mtime of every file (caches skipped)."""
+    if not ws:
+        return None
+    top = git_toplevel(ws)
+    if top:
+        def git(*a):
+            return subprocess.run(["git", "-C", str(top)] + list(a), capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=120).stdout
+        try:
+            untracked = [l for l in git("ls-files", "-o", "--exclude-standard", "-z").split("\0") if l]
+            hashes = subprocess.run(["git", "-C", str(top), "hash-object", "--stdin-paths"], input="\n".join(untracked),
+                                    capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                    timeout=120).stdout if untracked else ""
+            return "\0".join([git("rev-parse", "HEAD"), git("status", "--porcelain", "-uall"), git("diff", "HEAD"), hashes])
+        except (subprocess.SubprocessError, OSError):
+            return None
+    rows = []
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for f in files:
+            fp = os.path.join(root, f)
+            try:
+                st = os.lstat(fp)
+            except OSError:
+                continue
+            rows.append("%s %d %d" % (os.path.relpath(fp, ws), st.st_size, st.st_mtime_ns))
+            if len(rows) > 50000:
+                return None
+    return "\n".join(sorted(rows))
+
+
+def snapshot_workspace(ws, dest, limit=300 * 1024 * 1024):
+    """Copy the workspace's tracked + untracked (not ignored) files to dest, for seats whose CLI cannot be
+    made read-only. Returns dest, or None if ws is not a git checkout or is larger than limit."""
+    top = git_toplevel(ws)
+    if not top:
+        return None
+    out = subprocess.run(["git", "-C", str(ws), "ls-files", "-co", "--exclude-standard", "-z"], capture_output=True,
+                         text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+    files = [f for f in out.split("\0") if f]
+    total = 0
+    for f in files:
+        src = ws / f
+        if not src.is_file() or src.is_symlink():
+            continue
+        total += src.stat().st_size
+        if total > limit:
+            return None
+        (dest / f).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest / f)
+    return dest
 
 
 def slim(res):
@@ -716,7 +817,7 @@ def finish(run_dir, meta, state, options, cfg):
               "finished": dt.datetime.now().isoformat(timespec="seconds"),
               "tally": t,
               "seats": {sid: {k: st.get(k) for k in ("status", "model", "level", "weight", "tiebreak", "ballot", "history",
-                                                      "carried", "ratings_received")}
+                                                      "carried", "ratings_received", "ratings_note")}
                         for sid, st in state.items()},
               "skipped": meta.get("skipped", [])}
     (run_dir / "result.json").write_text(encoding="utf-8", data=json.dumps(result, indent=2, ensure_ascii=False))
@@ -782,7 +883,7 @@ def render(result):
             out.append("- **%s**: %s" % (sid, b["summary"]))
             for e in b["evidence"][:5]:
                 out.append("  - [%s] %s (%s)" % (e["type"], e["claim"], e["source"] or "no source"))
-    dissent = [(sid, st) for sid, st in seats.items() if st.get("status") == "ok" and st["ballot"]["vote"] != v]
+    dissent = [(sid, st) for sid, st in seats.items() if v and st.get("status") == "ok" and st["ballot"]["vote"] != v]
     if dissent:
         out += ["", "## Dissent", ""]
         for sid, st in dissent:
@@ -829,7 +930,10 @@ def cmd_status(args):
             alive = True
         except OSError:
             alive = False
-    print("RUNNING" if alive else "FAILED (runner exited without decision.md; see rt log / progress.log)")
+    if alive:
+        print("RUNNING" if prog.exists() else "STARTING")
+    else:
+        print("FAILED (runner exited without decision.md; see rt log / progress.log)")
     return 0 if alive else 1
 
 
