@@ -72,6 +72,7 @@ EVIDENCE_TYPES = {"FACT", "INFERENCE"}
 
 _log_lock = threading.Lock()
 _live = set()  # Popen objects of running seats, reaped on exit/signal
+_stopping = threading.Event()  # set on SIGINT/SIGTERM: no new calls, no fallbacks
 
 
 def _kill_tree(p):
@@ -90,8 +91,12 @@ def reap_all(*_):
 
 
 def _on_signal(signum, _frame):
+    # sys.exit would wait for the worker threads, which would see their seat die and start the fallback
+    # model; set the flag first, kill every seat, then leave without joining anything
+    _stopping.set()
     reap_all()
-    sys.exit(128 + signum)
+    print("roundtable: stopped by signal %d, seats killed" % signum, file=sys.stderr, flush=True)
+    os._exit(128 + signum)
 
 
 # ---------------------------------------------------------------- config
@@ -242,13 +247,15 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
     prompt_file.write_text(encoding="utf-8", data=prompt)
     if out_file.exists():
         out_file.unlink()
+    if _stopping.is_set():
+        return {"status": "stopped", "detail": "council stopped", "text": ""}
     exe = shutil.which(adapter["bin"])
     if not exe:
         return {"status": "missing", "detail": "%s not on PATH" % adapter["bin"], "text": ""}
     values = {"model": model, "prompt": prompt, "prompt_file": str(prompt_file), "out_file": str(out_file)}
     argv = [exe] + [fill(a, values) for a in adapter["argv"]]
     env = dict(os.environ, ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
-    start = time.time()
+    start, mono = time.time(), time.monotonic()
     stdin = open(prompt_file, encoding="utf-8") if adapter.get("stdin") else subprocess.DEVNULL
     kw = {"start_new_session": True} if os.name != "nt" else {}
     try:
@@ -256,27 +263,39 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
                              stderr=subprocess.PIPE, env=env, text=True, encoding="utf-8", errors="replace", **kw)
         _live.add(p)
         try:
-            out, err = p.communicate(timeout=timeout)
-            rc = p.returncode
-        except subprocess.TimeoutExpired:
-            _kill_tree(p)
-            out, err = p.communicate()
-            rc = None
+            # wall-clock deadline: communicate()'s timeout is monotonic and stands still while a laptop sleeps
+            deadline = start + timeout
+            while True:
+                try:
+                    out, err = p.communicate(timeout=min(30, max(1, deadline - time.time())))
+                    rc = p.returncode
+                    break
+                except subprocess.TimeoutExpired:
+                    if time.time() >= deadline or _stopping.is_set():
+                        _kill_tree(p)
+                        out, err = p.communicate()
+                        rc = None
+                        break
         finally:
             _live.discard(p)
     finally:
         if stdin is not subprocess.DEVNULL:
             stdin.close()
     secs = round(time.time() - start, 1)
+    slept = round(secs - (time.monotonic() - mono))
     (seat_dir / "stdout.txt").write_text(encoding="utf-8", data=out or "")
     (seat_dir / "stderr.txt").write_text(encoding="utf-8", data=err or "")
     text = out or ""
     if adapter.get("output") == "out_file" and out_file.exists():
         text = out_file.read_text(encoding="utf-8")
     res = {"rc": rc, "secs": secs, "text": ANSI_RE.sub("", text), "noise": ANSI_RE.sub("", (out or "") + "\n" + (err or ""))}
+    if slept > 60:
+        res["slept"] = slept  # the host slept mid-call; network errors/timeouts are likely that, not the model
     if rc is None:
-        res["status"] = "timeout"
-        res["detail"] = "no answer after %ss" % timeout
+        res["status"] = "stopped" if _stopping.is_set() else "timeout"
+        res["detail"] = "council stopped" if _stopping.is_set() else "no answer after %ss" % timeout
+        if slept > 60:
+            res["detail"] += " (host slept %ss)" % slept
     return res
 
 
@@ -348,7 +367,7 @@ def normalize_ballot(obj, option_ids):
 
 
 def classify(res, option_ids):
-    if res.get("status") in ("missing", "timeout"):
+    if res.get("status") in ("missing", "timeout", "stopped"):
         return res
     obj = parse_ballot(res["text"], option_ids) or (parse_ballot(res["noise"], option_ids) if res.get("rc") == 0 else None)
     if obj is not None:
@@ -361,7 +380,9 @@ def classify(res, option_ids):
         else:
             res["status"] = "ok"
         return res
-    tail = res["noise"][-4000:]
+    # only the last lines: CLIs echo tool output (file contents) into stderr, and a file that merely
+    # mentions "quota" must not turn a crash into a quota fallback
+    tail = "\n".join([l for l in res["noise"].splitlines() if l.strip()][-15:])[-4000:]
     if UNAVAILABLE_RE.search(tail):
         res["status"] = "unavailable"
     elif QUOTA_RE.search(tail):
@@ -412,7 +433,7 @@ def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, sta
         attempts.append({k: res.get(k) for k in ("model", "status", "detail", "secs")})
         log(run_dir, "r%d %-10s %-24s %-11s %ss %s" % (rnd, seat["id"], model, res["status"], res.get("secs", "-"),
                                                        res.get("detail", "") if res["status"] != "ok" else ""))
-        if res["status"] == "missing":
+        if res["status"] in ("missing", "stopped") or _stopping.is_set():
             break
         if res["status"] not in FALLBACK_STATUSES:
             res["attempts"] = attempts
@@ -629,6 +650,9 @@ def cmd_run(args):
     (run_dir / "brief.md").write_text(encoding="utf-8", data=brief)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _on_signal)
+    if sys.platform == "darwin" and shutil.which("caffeinate"):
+        # keep a laptop from idle-sleeping mid-council (closing the lid on battery still sleeps)
+        subprocess.Popen(["caffeinate", "-i", "-s", "-w", str(os.getpid())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     atexit.register(reap_all)
     seats, skipped = resolve_seats(cfg, (args.seats or "full").split(","), private=args.private)
     workspace = Path(args.workspace).resolve() if args.workspace else None

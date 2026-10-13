@@ -83,6 +83,12 @@ Ghi chú CLI rút ra khi thử:
 - grok-4.7 có lúc chỉ nói "tôi sẽ đọc file trước…" rồi kết thúc lượt → mọi ghế trả lời không có phiếu
   sẽ được gọi lại đúng một lần với lời nhắc phải in phiếu JSON (không tính là fallback).
 - `--out` tương đối làm grok không thấy prompt file (cwd khác) → mọi đường dẫn đều resolve tuyệt đối.
+- Laptop gập nắp chạy pin (run4, 2026-10-13 18:02-20:00): máy liên tục Maintenance Sleep, ghế treo vì mất
+  mạng, còn timeout không kích hoạt vì `communicate(timeout)` dùng đồng hồ monotonic (đứng yên khi ngủ) →
+  deadline theo giờ thực, log "host slept Ns", `caffeinate -i -s` trong lúc chạy (không chặn được gập nắp khi chạy pin).
+- SIGTERM với `sys.exit` làm worker thread thấy ghế chết và tự gọi model fallback → cờ dừng + `os._exit`.
+- OpenCode in nội dung file đã đọc ra stderr; một file có chữ "quota" làm lỗi mạng bị xếp nhầm thành
+  hết quota → chỉ dò 15 dòng cuối.
 
 Phiên thật đầu tiên (brief: skill này nên nằm ở repo riêng hay trong pi-skill) → 4/4 phiếu hợp lệ chọn
 repo riêng; Fable/Opus/Codex dẫn README vercel-labs/skills và tài liệu GitHub Actions làm bằng chứng.

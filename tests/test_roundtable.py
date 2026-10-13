@@ -209,6 +209,39 @@ class EndToEndTest(unittest.TestCase):
         self.assertIn("FAILED", p.stdout)
         self.assertIn("20260101-000000-x", p.stdout)
 
+    def test_quota_word_in_echoed_files_is_not_quota(self):
+        noise = "cat tests.py\n'models': ['quota']\n" + "\n".join("x%d" % i for i in range(30)) + "\nError: connection reset"
+        self.assertEqual(rt.classify({"rc": 1, "text": "", "noise": noise}, ["A", "B"])["status"], "error")
+
+    def test_timeout_walks_to_fallback(self):
+        # b uses a different model id: a fallback equal to another seat's primary would be dropped
+        seats = [{"id": "a", "adapter": "fake", "models": ["slow", "vote-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A-2"]}]
+        res, _ = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--timeout", "2"])
+        self.assertEqual([a["status"] for a in res["seats"]["a"]["history"][0]["attempts"]], ["timeout", "ok"])
+
+    def test_sigterm_kills_seats_without_fallback(self):
+        import signal as sg
+        import time as tm
+        tmp = Path(tempfile.mkdtemp())
+        cfg = {"adapters": {"fake": {"bin": sys.executable, "argv": [str(FAKE), "{model}"], "stdin": True}},
+               "seats": [{"id": "a", "adapter": "fake", "models": ["slow", "vote-A"]},
+                         {"id": "b", "adapter": "fake", "models": ["slow"]}], "presets": {"t": ["a", "b"]}}
+        (tmp / "cfg.json").write_text(json.dumps(cfg))
+        (tmp / "brief.md").write_text("# x\n\n## Options\n- A: a\n- B: b\n")
+        env = dict(os.environ, ROUNDTABLE_RUNS=str(tmp / "runs"))
+        env.pop("ROUNDTABLE_SEAT", None)
+        p = subprocess.Popen([sys.executable, str(SCRIPT), "--config", str(tmp / "cfg.json"), "run", "--brief", str(tmp / "brief.md"),
+                              "--seats", "t", "--out", str(tmp / "run")], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        tm.sleep(2)
+        t0 = tm.time()
+        p.send_signal(sg.SIGTERM)
+        p.wait(timeout=20)
+        self.assertLess(tm.time() - t0, 10)
+        self.assertEqual(p.returncode, 128 + sg.SIGTERM)
+        self.assertFalse((tmp / "run/r1/a/1").exists(), "fallback model must not start after a stop")
+        out = subprocess.run(["pgrep", "-f", str(FAKE) + " slow"], capture_output=True, text=True).stdout.strip()
+        self.assertEqual(out, "", "seat processes must be gone")
+
     def test_recursion_guard(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "run", "--brief", "-"], input="x", capture_output=True, text=True,
                            env=dict(os.environ, ROUNDTABLE_SEAT="opus"))

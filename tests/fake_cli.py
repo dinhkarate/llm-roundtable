@@ -7,6 +7,8 @@
   unknown        print an unknown-model error, exit 1
   prose          answer without any JSON
   lazy-X         announce a plan without a ballot unless nudged, then vote X
+  slow           sleep 60s (for timeout/stop tests)
+  echo-quota     echo file text mentioning "quota" to stderr, then crash
   write-X        write a file into the cwd (breaks read-only), then vote X
 Usage: fake_cli.py <model>   (prompt on stdin)
 """
@@ -24,6 +26,14 @@ if model == "quota":
     sys.exit(1)
 if model == "unknown":
     print("Couldn't set model 'x': unknown model id", file=sys.stderr)
+    sys.exit(1)
+if model == "slow":
+    import time
+    time.sleep(60)
+    sys.exit(0)
+if model == "echo-quota":
+    print("reading tests: seats = [{'models': ['quota']}]\n" + "\n".join("line %d" % i for i in range(30)), file=sys.stderr)
+    print("Error: connection reset", file=sys.stderr)
     sys.exit(1)
 if model == "prose":
     print("I think A is best.")

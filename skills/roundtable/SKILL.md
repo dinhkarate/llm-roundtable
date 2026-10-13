@@ -61,6 +61,9 @@ sleep 2; RUN=$(head -1 "$TMPDIR/rt.log")   # first line = run directory
 python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / FAILED (runner died: read rt.log)
 ```
 
+On a laptop keep the lid open or the machine on power: a sleeping host stalls every seat
+(the script holds `caffeinate` on macOS, which cannot stop lid-close sleep on battery).
+
 Always pass `$RUN`: a bare `status` shows the newest run, which may be someone else's. In Claude Code
 you may wait with a background `until python3 $S status "$RUN" | grep -qE '^(DONE|FAILED)'; do sleep 30; done`
 (re-arm it if it times out) instead of polling by hand.
