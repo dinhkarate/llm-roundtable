@@ -638,6 +638,9 @@ def cmd_run(args):
     if hits and not args.allow_sensitive:
         raise SystemExit("brief or options look like they contain secrets (%s). Remove them; they are sent to several "
                          "vendors. Use --allow-sensitive only if these are false positives." % ", ".join(hits))
+    default = (args.default or ("CHANGES" if args.mode == "review" else "")).strip().upper() or None
+    if default and default not in option_ids:
+        raise SystemExit("--default %s is not one of the options %s" % (default, ",".join(option_ids)))
     rounds = max(1, min(3, args.rounds or cfg.get("rounds", 2)))
     timeout = args.timeout or cfg.get("timeout", 900)
     title = args.title or (brief.strip().splitlines() or ["decision"])[0].lstrip("# ").strip()
@@ -658,7 +661,7 @@ def cmd_run(args):
     workspace = Path(args.workspace).resolve() if args.workspace else None
     meta = {"title": title, "options": options, "rounds": rounds, "timeout": timeout, "mode": args.mode,
             "workspace": str(workspace) if workspace else None, "private": args.private,
-            "decision_rule": cfg.get("decision_rule", "weighted"), "quorum": cfg.get("quorum", 2),
+            "decision_rule": cfg.get("decision_rule", "weighted"), "quorum": cfg.get("quorum", 2), "default": default,
             "seats": seats, "skipped": skipped, "started": started, "pid": os.getpid()}
     (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
     log(run_dir, "council: %s | options %s | rounds %d" % (", ".join(s["id"] for s in seats), ",".join(option_ids), rounds))
@@ -836,7 +839,14 @@ def finish(run_dir, meta, state, options, cfg):
     quorum = meta.get("quorum", 2)
     if t["valid_votes"] < quorum:
         t["verdict"], t["no_quorum"] = None, True
-    result = {"meta": {k: meta[k] for k in ("title", "options", "rounds", "mode", "workspace", "private", "decision_rule", "quorum", "started")},
+    t["decided_by"] = "none"
+    if t["verdict"]:
+        t["decided_by"] = "tiebreak" if t["tiebreak"] else "council"
+    elif meta.get("default"):
+        # nobody is there to ask: a council that cannot decide falls back to the brief's safe option
+        t["verdict"], t["decided_by"] = meta["default"], "default"
+    result = {"meta": {k: meta.get(k) for k in ("title", "options", "rounds", "mode", "workspace", "private", "decision_rule",
+                                               "quorum", "started", "default")},
               "workspace_changed": bool(meta.get("workspace_changed")),
               "finished": dt.datetime.now().isoformat(timespec="seconds"),
               "tally": t,
@@ -846,8 +856,10 @@ def finish(run_dir, meta, state, options, cfg):
               "skipped": meta.get("skipped", [])}
     (run_dir / "result.json").write_text(encoding="utf-8", data=json.dumps(result, indent=2, ensure_ascii=False))
     (run_dir / "decision.md").write_text(encoding="utf-8", data=render(result))
-    log(run_dir, "done: verdict %s" % (t["verdict"] or ("NO QUORUM" if t.get("no_quorum") else "TIE")))
+    log(run_dir, "done: verdict %s (%s)" % (t["verdict"] or ("NO QUORUM" if t.get("no_quorum") else "TIE"), t["decided_by"]))
     print((run_dir / "decision.md").read_text(encoding="utf-8"))
+    # last line, for agents acting without a user: VERDICT: <option|NONE> (council|tiebreak|default|none)
+    print("VERDICT: %s (%s)" % (t["verdict"] or "NONE", t["decided_by"]))
 
 
 def render(result):
@@ -857,10 +869,14 @@ def render(result):
     if result.get("workspace_changed"):
         out += ["> **WARNING:** files in the workspace changed during the council. A seat may have broken the "
                 "read-only rule; check `git status` before trusting or keeping anything.", ""]
-    if t.get("no_quorum"):
-        out.append("**Verdict: NO QUORUM** (%d valid ballot(s), need %d). Do not treat this as a decision." % (t["valid_votes"], meta["quorum"]))
+    undecided = ("NO QUORUM (%d valid ballot(s), need %d)" % (t["valid_votes"], meta["quorum"]) if t.get("no_quorum")
+                 else "TIE (%s)" % t["tiebreak"])
+    if t.get("decided_by") == "default":
+        v = t["verdict"]
+        out.append("**Verdict: %s: %s (safe default)**: the council did not decide, %s, so the brief's default applies."
+                   % (v, labels[v], undecided))
     elif t["verdict"] is None:
-        out.append("**Verdict: TIE, escalate to the user.** %s" % t["tiebreak"])
+        out.append("**Verdict: none, %s.** No `--default` was given; do not act on this question." % undecided)
     else:
         v = t["verdict"]
         out.append("**Verdict: %s: %s**  (weighted %.2f of %.2f, %d of %d valid votes)"
@@ -1027,6 +1043,8 @@ def main(argv=None):
     r.add_argument("--title")
     r.add_argument("--out", help="run directory (default ~/.roundtable/runs/<time>-<slug>)")
     r.add_argument("--seed", type=int, help="seed for the anonymous label shuffle")
+    r.add_argument("--default", help="option to take when the council cannot decide (TIE without Fable, NO QUORUM); "
+                                     "pick the safest, most reversible one. Review mode defaults to CHANGES")
     r.set_defaults(func=cmd_run)
 
     d = sub.add_parser("doctor", help="list seats and (with --probe) ping every model")

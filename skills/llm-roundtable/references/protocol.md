@@ -68,8 +68,9 @@ peer(seat)   = mean of the 0-2 ratings other members gave it in the last cross-e
 weight(seat) = seat.weight x (0.5 + 0.5 x peer)          -> 0.5x .. 1.5x
 score(opt)   = sum of weight over valid ballots for opt
 verdict      = argmax score                               (decision_rule "count": argmax votes, score breaks ties)
-tie          -> option the tiebreak seat (Fable) voted for; Fable not on a tied option -> TIE, ask the user
+tie          -> option the tiebreak seat (Fable) voted for; Fable not on a tied option -> TIE
 valid ballots < quorum (2) -> NO QUORUM
+TIE / NO QUORUM -> --default (safe option from the brief; review mode: CHANGES), else VERDICT NONE
 ```
 
 Confidence is recorded but not weighted: self-reported confidence is poorly calibrated and easy to

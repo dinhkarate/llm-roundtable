@@ -1,5 +1,8 @@
 # llm-roundtable
 
+Hệ ra quyết định thay user khi user vắng mặt (Orca worker, bot orca-pod, /loop, chạy qua đêm): đáng lẽ dừng lại hỏi
+thì agent triệu tập hội đồng, làm theo phán quyết và để lại vết (PR/issue/commit) cho user đọc sau.
+
 Hội đồng AI ra quyết định cho mọi agentic coding tool. Fable 5.1, Opus 5.5, GPT (Codex, gpt-6.1-sol),
 Grok 4.7, Gemini 3.8 Flash (Antigravity) và model free mới nhất của OpenCode đều thu thập bằng chứng,
 chất vấn nhau ẩn danh, rồi bỏ phiếu có trọng số. Phương án có điểm cao nhất thắng; hoà thì Fable quyết.
@@ -35,7 +38,8 @@ Kết quả ở `~/.roundtable/runs/<thời gian>-<slug>/decision.md` (+ `result
 - Fallback xuống đúng một cấp cùng họ (fable 5, opus 5, gpt-6-sol, grok-4.6, gemini 3.7 flash, model free kế tiếp);
   hết cách thì ghế đó **UNATTENDED**.
 - Phiếu không có bằng chứng FACT/INFERENCE thì không được tính. Trọng số = weight × (0.5 + 0.5 × điểm bằng chứng do các ghế khác chấm).
-- Hoà → theo phiếu của Fable; Fable không nằm trong nhóm hoà → TIE, hỏi người dùng. Dưới 2 phiếu hợp lệ → NO QUORUM.
+- Hoà → theo phiếu của Fable; Fable không nằm trong nhóm hoà → TIE. Dưới 2 phiếu hợp lệ → NO QUORUM.
+  TIE/NO QUORUM → lấy `--default` (phương án an toàn, đảo ngược được). Dòng cuối luôn là `VERDICT: <option|NONE> (council|tiebreak|default|none)`.
 
 ## Test
 

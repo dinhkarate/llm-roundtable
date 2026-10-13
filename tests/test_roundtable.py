@@ -158,10 +158,17 @@ class EndToEndTest(unittest.TestCase):
         # s2 was rated on its round-1 B and then switched to A: its rating must not weigh the new vote
         self.assertEqual(res["seats"]["s2"]["ratings_received"], [])
 
+    def test_default_applies_when_council_cannot_decide(self):
+        seats = [{"id": "x", "adapter": "fake", "models": ["vote-A"]}, {"id": "y", "adapter": "fake", "models": ["vote-B"]}]
+        res, md = self.run_council(seats, {"t": ["x", "y"]}, ["--rounds", "1", "--default", "b"])
+        self.assertEqual((res["tally"]["verdict"], res["tally"]["decided_by"]), ("B", "default"))
+        self.assertIn("safe default", md)
+
     def test_no_quorum(self):
         seats = [{"id": "a", "adapter": "fake", "models": ["quota"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
         res, md = self.run_council(seats, {"t": ["a", "b"]})
         self.assertTrue(res["tally"].get("no_quorum"))
+        self.assertEqual(res["tally"]["decided_by"], "none")
         self.assertIn("NO QUORUM", md)
 
     def test_workspace_write_is_flagged(self):

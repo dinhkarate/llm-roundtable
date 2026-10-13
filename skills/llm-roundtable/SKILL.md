@@ -1,22 +1,24 @@
 ---
 name: llm-roundtable
-description: Convene a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that each gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the option with the highest weighted score wins and ties go to the Fable seat. Use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt", asks for a multi-model second opinion, or wants something approved (plan, PR, architecture, migration, risky or irreversible change). Also offer it (do not start it unasked) before a high-stakes, hard-to-reverse decision. Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
+description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
 version: 0.1.0
 tags: [decision, review, multi-model, debate, voting, council]
 ---
 
 # llm-roundtable
 
-You are the **moderator**, never a voter. You turn the question into a brief, run
-`scripts/roundtable.py`, and report the verdict faithfully. Each member is a separate CLI process
-(fresh context, read-only), even if it is the same product you are running in.
+The council stands in for the user while the user is away, so work does not stall on a question.
+You are the **moderator**, never a voter: turn the question into a brief, run `scripts/roundtable.py`,
+then act on the verdict. Each member is a separate CLI process (fresh context, read-only), even if it
+is the same product you are running in.
 
 ## When
 
-- Run it when the user asks (any trigger above) or when an approval gate the user set up calls for it.
-- Otherwise only *propose* it: a full council costs ~12 model calls and 5-20 minutes.
-- Skip it for questions with one checkable answer (run the check instead) and for anything
-  the user already decided.
+- **User away** (autonomous run, Orca worker, orca-pod bot, /loop, /goal, overnight): every time you
+  would stop and ask the user to pick, approve or review, convene the council instead and keep going.
+- **User present**: run it when they ask for it; otherwise just ask them, they are the better judge.
+- Skip it for questions with one checkable answer (run the check instead), for anything the user or
+  the task already decided, and for trivial reversible choices (just pick one and say so).
 
 ## 1. Write the brief
 
@@ -33,6 +35,9 @@ Create a markdown file (e.g. `$TMPDIR/roundtable-brief.md`):
 - B: <...>
 - C: <...>   (2-5 options; include "do nothing / defer" when it is a real choice)
 ```
+
+Always pass `--default <option>`: the safest, most reversible option (often "defer" or "smallest
+change"). It is what happens when the council cannot decide; nobody is there to break a deadlock.
 
 - Members cannot see this conversation. The brief must stand alone.
 - Neutral wording: do not reveal which option you or the user prefer.
@@ -69,26 +74,31 @@ you may wait with a background `until python3 $S status "$RUN" | grep -qE '^(DON
 (re-arm it if it times out) instead of polling by hand.
 
 Exit code 3 / a WARNING banner in decision.md means files in `--workspace` changed while the council
-ran. Run `git status` there and tell the user before trusting anything.
+ran. Run `git status` there, restore anything a seat touched, and do not act on that verdict.
 
 Useful flags: `--seats duo` (Fable + Opus only), `--seats fable,codex,grok`, `--rounds 1`
 (blind vote, cheapest) or `3`, `--workspace .` (members may read the repo, read-only),
-`--private`, `--timeout 600`, `--option A='...'` instead of an Options section.
+`--private`, `--timeout 600`, `--option A='...'` instead of an Options section,
+`--default B` (review mode defaults to CHANGES).
 Presets: `full`, `duo`, `solo-codex`, `solo-grok`, `solo-agy` (see references/hosts.md).
 
-## 3. Report
+## 3. Act on the verdict
 
-Read `decision.md` in the run directory (path printed first; also `~/.roundtable/runs/`). Tell the user:
+The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default|none)`; details are in
+`decision.md` in the run directory.
 
-1. The verdict line as written (option, weighted score, votes). If it says **TIE** or
-   **NO QUORUM**, say so plainly: there is no decision; give the split and ask the user.
-2. The 2-4 strongest evidence items for the winner, and the strongest dissent.
-3. Unattended seats and fallbacks (e.g. "gemini UNATTENDED: 3.8 quota, 3.7 not available").
-4. Conditions and risks members attached.
-
-Never overrule or "correct" the vote, never re-run until you like the answer, and do not act on
-an outward-facing or irreversible step just because the council approved it: the user's own
-confirmation rules still apply. If the user asks for your view, give it separately and label it.
+- **council / tiebreak / default**: carry out that option, including its "conditions". Do not overrule
+  it, re-run until you like the answer, or swap in your own preference.
+- **NONE** (no `--default` was given and it did not decide): take the most reversible path, usually
+  leaving the change undone, and move on to other work.
+- Leave a trail where the user will look later (PR description, issue comment, commit message, or your
+  final report): the question, the verdict and how it was reached, the 2-3 strongest pieces of evidence,
+  the strongest dissent, and unattended seats (e.g. "gemini UNATTENDED: 3.8 quota, 3.7 not offered").
+  Link or paste the run directory path.
+- The council replaces the user's judgment, not the hard limits: it never authorizes leaking secrets,
+  deleting data or backups, spending money, or anything your host's own rules forbid outright.
+- If the user is present and asks, report the same items instead of acting, and give your own view
+  separately, labelled as yours.
 
 ## Rules the script enforces
 
@@ -103,7 +113,8 @@ confirmation rules still apply. If the user asks for your view, give it separate
 - Seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
   (codex, grok), a snapshot copy of the workspace (agy), MCP/app tools removed.
 - Weight = seat weight x (0.5 + 0.5 x mean peer rating, self-ratings ignored). Highest weighted
-  score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots: NO QUORUM.
+  score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots:
+  NO QUORUM. TIE or NO QUORUM falls back to `--default`.
 - A seat refuses to convene a council itself (`ROUNDTABLE_SEAT` guard).
 
 Details: `references/protocol.md` (rounds, prompts, maths), `references/hosts.md` (per-host setup,
