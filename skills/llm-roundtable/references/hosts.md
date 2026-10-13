@@ -2,7 +2,7 @@
 
 The council is a plain Python script that shells out to agent CLIs, so it runs from any host
 agent with a shell tool. Install the skill for every agent with
-`npx skills add dinhkarate/roundtable --skill roundtable` (or through the pi-skill manifest).
+`npx skills add dinhkarate/llm-roundtable --skill llm-roundtable` (or through the pi-skill manifest).
 
 ## Running from each host
 

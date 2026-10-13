@@ -135,7 +135,7 @@ def models_dev_opencode():
     if cache.exists() and time.time() - cache.stat().st_mtime < 86400:
         return json.loads(cache.read_text(encoding="utf-8"))
     try:
-        req = urllib.request.Request(MODELS_DEV, headers={"User-Agent": "roundtable/1 (+https://github.com/dinhkarate/roundtable)"})
+        req = urllib.request.Request(MODELS_DEV, headers={"User-Agent": "llm-roundtable/1 (+https://github.com/dinhkarate/llm-roundtable)"})
         with urllib.request.urlopen(req, timeout=15) as r:
             meta = json.load(r).get("opencode", {}).get("models", {})
         cache.parent.mkdir(parents=True, exist_ok=True)

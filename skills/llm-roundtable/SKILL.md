@@ -1,11 +1,11 @@
 ---
-name: roundtable
-description: Convene a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that each gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the option with the highest weighted score wins and ties go to the Fable seat. Use when the user says /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt", asks for a multi-model second opinion, or wants something approved (plan, PR, architecture, migration, risky or irreversible change). Also offer it (do not start it unasked) before a high-stakes, hard-to-reverse decision. Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
+name: llm-roundtable
+description: Convene a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that each gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the option with the highest weighted score wins and ties go to the Fable seat. Use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt", asks for a multi-model second opinion, or wants something approved (plan, PR, architecture, migration, risky or irreversible change). Also offer it (do not start it unasked) before a high-stakes, hard-to-reverse decision. Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
 version: 0.1.0
 tags: [decision, review, multi-model, debate, voting, council]
 ---
 
-# roundtable
+# llm-roundtable
 
 You are the **moderator**, never a voter. You turn the question into a brief, run
 `scripts/roundtable.py`, and report the verdict faithfully. Each member is a separate CLI process

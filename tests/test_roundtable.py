@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "skills/roundtable/scripts/roundtable.py"
+SCRIPT = ROOT / "skills/llm-roundtable/scripts/roundtable.py"
 FAKE = Path(__file__).resolve().parent / "fake_cli.py"
 sys.path.insert(0, str(SCRIPT.parent))
 import roundtable as rt  # noqa: E402
