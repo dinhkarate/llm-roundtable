@@ -1,0 +1,52 @@
+{
+  "_doc": "Default council. Override or extend in ~/.config/roundtable/seats.json (same shape; adapters/presets merge by key, seats patch by id). Placeholders: {model} {prompt} {prompt_file} {out_file}.",
+  "quorum": 2,
+  "rounds": 2,
+  "timeout": 900,
+  "decision_rule": "weighted",
+  "adapters": {
+    "claude": {
+      "bin": "claude",
+      "argv": ["-p", "--model", "{model}", "--permission-mode", "plan", "--disable-slash-commands"],
+      "stdin": true
+    },
+    "codex": {
+      "bin": "codex",
+      "argv": ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-m", "{model}", "-o", "{out_file}", "-"],
+      "stdin": true,
+      "output": "out_file"
+    },
+    "grok": {
+      "bin": "grok",
+      "argv": ["-m", "{model}", "--permission-mode", "plan", "--prompt-file", "{prompt_file}"]
+    },
+    "agy": {
+      "bin": "agy",
+      "argv": ["--model", "{model}", "--sandbox", "--dangerously-skip-permissions", "--disable-slash-commands", "-p={prompt}"],
+      "_note": "headless agy auto-denies read_url etc.; skip-permissions inside --sandbox, read-only is enforced by the prompt + workspace change check"
+    },
+    "opencode": {
+      "bin": "opencode",
+      "argv": ["run", "-m", "{model}", "--agent", "plan", "{prompt}"]
+    }
+  },
+  "seats": [
+    {"id": "fable",    "adapter": "claude",   "family": "fable",  "models": ["claude-fable-5-1", "claude-fable-5"], "weight": 1.0, "tiebreak": true},
+    {"id": "opus",     "adapter": "claude",   "family": "opus",   "models": ["claude-opus-5-5", "claude-opus-5"],   "weight": 1.0},
+    {"id": "codex",    "adapter": "codex",    "family": "gpt-sol","models": ["gpt-6.1-sol", "gpt-6-sol"],            "weight": 1.0},
+    {"id": "grok",     "adapter": "grok",     "family": "grok",   "models": ["grok-4.7", "grok-4.6"],                "weight": 1.0},
+    {"id": "gemini",   "adapter": "agy",      "family": "gemini-flash", "models": ["gemini-3.8-flash-high", "gemini-3.7-flash-high"], "weight": 1.0},
+    {"id": "opencode", "adapter": "opencode", "family": "opencode-free", "models": "auto:opencode-free", "count": 1, "weight": 1.0,
+     "may_train": true, "exclude": "claude|anthropic|gpt|openai|grok|xai|x-preview|gemini|google"},
+
+    {"id": "codex-6",  "adapter": "codex",    "family": "gpt-sol-alt", "models": ["gpt-6-sol"],              "weight": 1.0, "homogeneous": true},
+    {"id": "grok-46",  "adapter": "grok",     "family": "grok-alt",    "models": ["grok-4.6", "grok-4.5"],   "weight": 1.0, "homogeneous": true}
+  ],
+  "presets": {
+    "full":       ["fable", "opus", "codex", "grok", "gemini", "opencode"],
+    "duo":        ["fable", "opus"],
+    "solo-codex": ["codex", "codex-6", "opencode"],
+    "solo-grok":  ["grok", "grok-46", "opencode"],
+    "solo-agy":   ["gemini", "opencode"]
+  }
+}

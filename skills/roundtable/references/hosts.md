@@ -1,0 +1,73 @@
+# Hosts and setups
+
+The council is a plain Python script that shells out to agent CLIs, so it runs from any host
+agent with a shell tool. Install the skill for every agent with
+`npx skills add dinhkarate/roundtable --skill roundtable` (or through the pi-skill manifest).
+
+## Running from each host
+
+| Host | How to run a council that takes minutes |
+|---|---|
+| Claude Code | Bash `run_in_background: true`; you get a notification on exit |
+| Codex CLI | `nohup python3 $S run ... > rt.log 2>&1 &` then `python3 $S status` until `DONE` |
+| Grok CLI | same as Codex |
+| Antigravity (`agy`) | same as Codex |
+| OpenCode | same as Codex |
+| pi | same as Codex |
+| Orca | either of the above inside the agent's terminal, or run `python3 $S run ...` in its own Orca terminal so the user can watch `progress.log` |
+
+`$S` = `<skill dir>/scripts/roundtable.py`. `python3 $S doctor` shows which seats this host can fill.
+
+## Logins each seat needs
+
+| Seat | CLI | One-time login |
+|---|---|---|
+| fable, opus | `claude` | `claude` (subscription) |
+| codex | `codex` | `codex login` (ChatGPT plan) |
+| grok | `grok` | `grok login` |
+| gemini | `agy` | run `agy` once |
+| opencode | `opencode` | none for free models |
+
+Missing CLIs are not errors: those seats become UNATTENDED and the rest still vote.
+
+## Single-tool setups
+
+| Only this is installed | Preset | What you get | Caveat |
+|---|---|---|---|
+| Claude Code | `duo` | Fable 5.1 vs Opus 5.5, Fable breaks ties | same vendor; with 2 seats any split is decided by Fable |
+| Codex | `solo-codex` | gpt-6.1-sol + gpt-6-sol + free OpenCode model | the two GPT seats share training; add OpenCode for real diversity |
+| Grok CLI | `solo-grok` | grok-4.7 + grok-4.6 + free OpenCode model | same as above |
+| Antigravity | `solo-agy` | Gemini 3.8 Flash + free OpenCode model | also add Claude/GPT-OSS seats agy offers via a user config |
+| OpenCode | custom | several free models from different labs (`"count": 3`) | free models may train on prompts: never with private data |
+
+Recommendation: wherever possible keep at least three different vendor families. Installing
+`opencode` is the cheapest way to add one (free models, no login).
+
+## Orca (optional)
+
+Orca is not required. With Orca the user can watch the council: open a terminal in the worktree,
+run the council there, and read it with `orca terminal read --screen`. A later version may add an
+Orca transport that starts every seat as its own Orca agent terminal (visible TUIs, remote hosts
+such as a Windows box) instead of a subprocess.
+
+## Config overrides
+
+Put a JSON file at `~/.config/roundtable/seats.json` (or pass `--config`). Same shape as
+`scripts/seats.json`; `adapters` and `presets` merge by key, `seats` patch by `id`, new ids are added.
+
+```json
+{
+  "seats": [
+    {"id": "opencode", "count": 2},
+    {"id": "fable", "weight": 1.2},
+    {"id": "qwen", "adapter": "qwen", "family": "qwen", "models": ["qwen3-coder-plus"], "weight": 1.0}
+  ],
+  "adapters": {"qwen": {"bin": "qwen", "argv": ["-m", "{model}", "-p", "{prompt}"]}},
+  "presets": {"full": ["fable", "opus", "codex", "grok", "gemini", "opencode", "qwen"]}
+}
+```
+
+Adapter placeholders: `{model}`, `{prompt}` (text in argv), `{prompt_file}`, `{out_file}`.
+`"stdin": true` pipes the prompt on stdin; `"output": "out_file"` reads the answer from `{out_file}`.
+Keep `models` to at most two entries: the script never falls back more than one level.
+Windows hosts: prefer stdin or `{prompt_file}` adapters; argv prompts hit the 32 KB command-line limit.
