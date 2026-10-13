@@ -12,7 +12,7 @@
   | claude | `--permission-mode dontAsk` + allowlist: Read/Grep/Glob/WebSearch/WebFetch, `ls`, `wc`, `git status`, `git ls-files` (no code execution; no `rg`/`git diff`, whose `--pre`/`--output` run or write) | `--strict-mcp-config` (no MCP servers), `--tools` without Agent |
   | codex | `-s read-only` sandbox (kernel) | `--disable apps computer_use browser_use` |
   | grok | `--sandbox read-only` (kernel; temp dirs stay writable) | no MCP configured |
-  | agy | cannot be made read-only (headless needs skip-permissions for web reads), so `"isolate": true`: with `--workspace` it works in a snapshot copy of the checkout's tracked + untracked files | no MCP configured |
+  | agy | `--sandbox` without `--dangerously-skip-permissions` (that flag can lift the sandbox, agy issue #36; headless then denies prompt-gated tools like read_url) and `"isolate": true`: with `--workspace` it works in a snapshot copy of the checkout's tracked + untracked files | no MCP configured |
   | opencode | `--agent plan` | no MCP configured |
 
   Plan modes are avoided on claude and grok: they inject "write a plan, exit plan mode" instructions
@@ -24,6 +24,11 @@
 - **Isolation of the anonymity**: seat working directories are fresh temp dirs outside the run
   directory, and `rN_labels.json` is written only after round N has finished.
 - **Cleanup**: SIGINT/SIGTERM/exit kill every running seat's process group.
+- **Provenance**: a ballot is read only from the seat's final answer (stdout, or codex's last message), never
+  from stderr or echoed tool output. Seats get the parent environment minus credentials their CLI does not
+  need. Prompts and transcripts live in a temp dir during a round and are copied into the run dir after it.
+- **Tainted runs**: a changed workspace makes the run non-actionable: `VERDICT: NONE (workspace_changed)`,
+  `run` exits 3, `status` prints TAINTED and exits 4.
 
 ## Rounds
 
@@ -63,8 +68,8 @@ CLI missing on PATH -> UNATTENDED immediately
 ## Tally
 
 ```
-peer(seat)   = mean of the 0-2 ratings other members gave it in the last cross-exam (1.0 if none,
-               and 1.0 if the seat switched vote after the position they rated)
+peer(seat)   = mean of the 0-2 ratings other members with a valid ballot gave it in the last cross-exam
+               (1.0 if none, and 1.0 if the seat switched vote after the position they rated)
 weight(seat) = seat.weight x (0.5 + 0.5 x peer)          -> 0.5x .. 1.5x
 score(opt)   = sum of weight over valid ballots for opt
 verdict      = argmax score                               (decision_rule "count": argmax votes, score breaks ties)

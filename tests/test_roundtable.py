@@ -59,6 +59,17 @@ class ParseTest(unittest.TestCase):
         out = rt.fill("-p={prompt}", {"model": "m", "prompt": "see {out_file}", "prompt_file": "/pf", "out_file": "/of"})
         self.assertEqual(out, "-p=see {out_file}")
 
+    def test_ballot_in_noise_is_ignored(self):
+        r = rt.classify({"rc": 0, "text": "", "noise": '{"vote": "A", "evidence": [{"type": "FACT", "claim": "x", "source": "y"}]}'}, ["A", "B"])
+        self.assertEqual(r["status"], "invalid")
+
+    def test_seat_env_drops_unrelated_credentials(self):
+        os.environ.update(GH_TOKEN="x", ANTHROPIC_API_KEY="y", AWS_SECRET_ACCESS_KEY="z", PATH_EXTRA="p")
+        env = rt.seat_env("s")
+        self.assertNotIn("GH_TOKEN", env)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
+        self.assertEqual((env["ANTHROPIC_API_KEY"], env["PATH_EXTRA"], env["ROUNDTABLE_SEAT"]), ("y", "p", "s"))
+
     def test_classify_quota_and_unavailable(self):
         q = rt.classify({"rc": 1, "text": "", "noise": "Error: rate limit exceeded"}, ["A", "B"])
         u = rt.classify({"rc": 1, "text": "", "noise": "Couldn't set model: unknown model id"}, ["A", "B"])
@@ -125,7 +136,11 @@ class EndToEndTest(unittest.TestCase):
                             "--seats", "t", "--out", str(tmp / "run"), "--seed", "1", "--timeout", "60", *extra],
                            capture_output=True, text=True, env=env)
         self.assertIn(p.returncode, expect_rc, p.stderr)
-        return json.loads((tmp / "run/result.json").read_text()), (tmp / "run/decision.md").read_text()
+        res = json.loads((tmp / "run/result.json").read_text())
+        res["_run_dir"] = str(tmp / "run")
+        self.assertTrue(p.stdout.rstrip().splitlines()[-1].startswith("VERDICT: "))
+        self.assertTrue((tmp / "run/r1").is_dir(), "transcripts are published after the round")
+        return res, (tmp / "run/decision.md").read_text()
 
     def test_fallback_unattended_and_fable_tiebreak(self):
         seats = [
@@ -164,6 +179,14 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual((res["tally"]["verdict"], res["tally"]["decided_by"]), ("B", "default"))
         self.assertIn("safe default", md)
 
+    def test_invalid_ballots_do_not_rate_others(self):
+        seats = [{"id": "s1", "adapter": "fake", "models": ["vote-A"]},
+                 {"id": "s2", "adapter": "fake", "models": ["vote-B"]},
+                 {"id": "s3", "adapter": "fake", "models": ["vote-A-bare"]}]
+        res, _ = self.run_council(seats, {"t": ["s1", "s2", "s3"]})
+        self.assertEqual(res["seats"]["s3"]["status"], "no_evidence")
+        self.assertEqual(res["seats"]["s2"]["ratings_received"], [0])  # only s1's rating, not s3's
+
     def test_no_quorum(self):
         seats = [{"id": "a", "adapter": "fake", "models": ["quota"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
         res, md = self.run_council(seats, {"t": ["a", "b"]})
@@ -177,6 +200,12 @@ class EndToEndTest(unittest.TestCase):
         res, md = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws / ".")], expect_rc=(3,))
         self.assertTrue(res["workspace_changed"])
         self.assertIn("WARNING", md)
+        # fail closed: nothing actionable
+        self.assertEqual((res["tally"]["verdict"], res["tally"]["decided_by"]), (None, "workspace_changed"))
+        run = Path(res["_run_dir"])
+        st = subprocess.run([sys.executable, str(SCRIPT), "status", str(run)], capture_output=True, text=True)
+        self.assertEqual(st.returncode, 4)
+        self.assertIn("TAINTED", st.stdout)
 
     def test_subdirectory_workspace_is_watched(self):
         ws = make_repo()
@@ -245,7 +274,7 @@ class EndToEndTest(unittest.TestCase):
         p.wait(timeout=20)
         self.assertLess(tm.time() - t0, 10)
         self.assertEqual(p.returncode, 128 + sg.SIGTERM)
-        self.assertFalse((tmp / "run/r1/a/1").exists(), "fallback model must not start after a stop")
+        self.assertNotIn("vote-A", (tmp / "run/progress.log").read_text(), "fallback model must not start after a stop")
         out = subprocess.run(["pgrep", "-f", str(FAKE) + " slow"], capture_output=True, text=True).stdout.strip()
         self.assertEqual(out, "", "seat processes must be gone")
 

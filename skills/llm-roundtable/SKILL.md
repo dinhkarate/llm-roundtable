@@ -61,20 +61,21 @@ A council takes 5-20 minutes, longer than most tool timeouts (Claude Code stops 
 commands at their timeout). On every host, start it detached and poll:
 
 ```bash
-nohup python3 $S run --brief brief.md > "$TMPDIR/rt.log" 2>&1 &
-sleep 2; RUN=$(head -1 "$TMPDIR/rt.log")   # first line = run directory
-python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / FAILED (runner died: read rt.log)
+nohup python3 $S run --brief brief.md > "${TMPDIR:-/tmp}/rt.log" 2>&1 &
+sleep 2; RUN=$(head -1 "${TMPDIR:-/tmp}/rt.log")   # first line = run directory
+python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / TAINTED / FAILED
 ```
 
 On a laptop keep the lid open or the machine on power: a sleeping host stalls every seat
 (the script holds `caffeinate` on macOS, which cannot stop lid-close sleep on battery).
 
 Always pass `$RUN`: a bare `status` shows the newest run, which may be someone else's. In Claude Code
-you may wait with a background `until python3 $S status "$RUN" | grep -qE '^(DONE|FAILED)'; do sleep 30; done`
+you may wait with a background `until python3 $S status "$RUN" | grep -qE '^(DONE|TAINTED|FAILED)'; do sleep 30; done`
 (re-arm it if it times out) instead of polling by hand.
 
-Exit code 3 / a WARNING banner in decision.md means files in `--workspace` changed while the council
-ran. Run `git status` there, restore anything a seat touched, and do not act on that verdict.
+TAINTED (exit code 3 from `run`, 4 from `status`, `VERDICT: NONE (workspace_changed)`) means files in
+`--workspace` changed while the council ran. Nothing from that run is actionable: run `git status`
+there, restore anything a seat touched, and treat the question as undecided.
 
 Useful flags: `--seats duo` (Fable + Opus only), `--seats fable,codex,grok`, `--rounds 1`
 (blind vote, cheapest) or `3`, `--workspace .` (members may read the repo, read-only),
@@ -84,19 +85,22 @@ Presets: `full`, `duo`, `solo-codex`, `solo-grok`, `solo-agy` (see references/ho
 
 ## 3. Act on the verdict
 
-The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default|none)`; details are in
+The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default|none|workspace_changed)`; details are in
 `decision.md` in the run directory.
 
 - **council / tiebreak / default**: carry out that option, including its "conditions". Do not overrule
   it, re-run until you like the answer, or swap in your own preference.
-- **NONE** (no `--default` was given and it did not decide): take the most reversible path, usually
+- **NONE** (no `--default` and no decision, or a TAINTED run): take the most reversible path, usually
   leaving the change undone, and move on to other work.
 - Leave a trail where the user will look later (PR description, issue comment, commit message, or your
   final report): the question, the verdict and how it was reached, the 2-3 strongest pieces of evidence,
   the strongest dissent, and unattended seats (e.g. "gemini UNATTENDED: 3.8 quota, 3.7 not offered").
   Link or paste the run directory path.
-- The council replaces the user's judgment, not the hard limits: it never authorizes leaking secrets,
-  deleting data or backups, spending money, or anything your host's own rules forbid outright.
+- The council replaces the user's *judgment* inside the work the user already handed you, not their
+  *authority*. It picks between options; it does not widen what you may do. Actions that need the
+  user's standing permission (push to shared branches, merge, deploy, publish, message people) still
+  need it; the council can only choose among actions you were already allowed to take. It never
+  authorizes leaking secrets, deleting data or backups, or spending money.
 - If the user is present and asks, report the same items instead of acting, and give your own view
   separately, labelled as yours.
 
@@ -111,7 +115,8 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
 - Round 1 blind; round 2+ shows every position anonymized (M1, M2...) and asks for evidence ratings
   (0-2), rebuttals and a fresh vote. Ballots without sourced FACT/INFERENCE evidence do not count.
 - Seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
-  (codex, grok), a snapshot copy of the workspace (agy), MCP/app tools removed.
+  (codex, grok), agy in its own sandbox on a snapshot copy of the workspace, MCP/app tools removed,
+  unrelated credentials stripped from their environment. Only a seat's final answer can carry its ballot.
 - Weight = seat weight x (0.5 + 0.5 x mean peer rating, self-ratings ignored). Highest weighted
   score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots:
   NO QUORUM. TIE or NO QUORUM falls back to `--default`.

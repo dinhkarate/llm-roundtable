@@ -29,9 +29,9 @@
     },
     "agy": {
       "bin": "agy",
-      "argv": ["--model", "{model}", "--sandbox", "--dangerously-skip-permissions", "--disable-slash-commands", "-p={prompt}"],
+      "argv": ["--model", "{model}", "--sandbox", "--disable-slash-commands", "-p={prompt}"],
       "isolate": true,
-      "_note": "headless agy auto-denies read_url, so permissions are skipped; it cannot be made read-only, so with --workspace it gets a snapshot copy (isolate) instead of the real checkout"
+      "_note": "no --dangerously-skip-permissions: it can lift the sandbox (agy issue #36). Headless then denies tools that need a prompt (read_url); the seat continues without them. With --workspace it still reads a snapshot copy, never the real checkout"
     },
     "opencode": {
       "bin": "opencode",

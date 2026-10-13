@@ -232,6 +232,18 @@ def log(run_dir, msg):
         print(line, file=sys.stderr, flush=True)
 
 
+SECRET_ENV_RE = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|PRIVATE|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
+SEAT_AUTH_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XAI_", "GROK_", "GEMINI_", "GOOGLE_", "OPENCODE_", "AGY_")
+
+
+def seat_env(seat_id):
+    """The parent environment minus credentials the seat's own CLI does not need (GH_TOKEN, cloud keys, ...)."""
+    env = {k: v for k, v in os.environ.items()
+           if not SECRET_ENV_RE.search(k) or k.startswith(SEAT_AUTH_PREFIXES)}
+    env.update(ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
+    return env
+
+
 PLACEHOLDER_RE = re.compile(r"\{(model|prompt|prompt_file|out_file)\}")
 
 
@@ -254,7 +266,7 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
         return {"status": "missing", "detail": "%s not on PATH" % adapter["bin"], "text": ""}
     values = {"model": model, "prompt": prompt, "prompt_file": str(prompt_file), "out_file": str(out_file)}
     argv = [exe] + [fill(a, values) for a in adapter["argv"]]
-    env = dict(os.environ, ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
+    env = seat_env(seat_id)
     start, mono = time.time(), time.monotonic()
     stdin = open(prompt_file, encoding="utf-8") if adapter.get("stdin") else subprocess.DEVNULL
     kw = {"start_new_session": True} if os.name != "nt" else {}
@@ -369,7 +381,8 @@ def normalize_ballot(obj, option_ids):
 def classify(res, option_ids):
     if res.get("status") in ("missing", "timeout", "stopped"):
         return res
-    obj = parse_ballot(res["text"], option_ids) or (parse_ballot(res["noise"], option_ids) if res.get("rc") == 0 else None)
+    # only the seat's final answer counts: stderr and echoed tool output can carry someone else's JSON
+    obj = parse_ballot(res["text"], option_ids)
     if obj is not None:
         ballot = normalize_ballot(obj, option_ids)
         res["ballot"] = ballot
@@ -467,8 +480,9 @@ def options_block(options):
 
 def access_note(workspace):
     if workspace:
-        return ("You may READ files under the current working directory and run read-only commands "
-                "(ls, cat, grep, git log/show/diff) to verify claims. You may use web search if your tools allow.")
+        return ("You may READ files under the current working directory with your file-reading and search tools "
+                "to verify claims. Shell commands may be denied; if one is, continue without it. You may use web "
+                "search if your tools allow.")
     return ("You cannot see the user's files. Rely on the brief, your own knowledge and web sources "
             "if your tools allow.")
 
@@ -670,6 +684,12 @@ def cmd_run(args):
     scratch = Path(tempfile.mkdtemp(prefix="roundtable-"))
     atexit.register(shutil.rmtree, str(scratch), True)
     snapshot = {}
+    io_dir = Path(tempfile.mkdtemp(prefix="roundtable-io-"))  # prompts/transcripts while a round runs
+    atexit.register(shutil.rmtree, str(io_dir), True)
+
+    def publish_round(name):
+        if (io_dir / name).exists():
+            shutil.copytree(str(io_dir / name), str(run_dir / name), dirs_exist_ok=True)
 
     def seat_cwd(seat):
         isolate = cfg["adapters"].get(seat["adapter"], {}).get("isolate")
@@ -693,7 +713,7 @@ def cmd_run(args):
     # round 1: independent
     p1 = prompt_round1(brief, options, workspace, len(seats))
     with cf.ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
-        futs = {ex.submit(sit, s, cfg, p1, run_dir / "r1", seat_cwd(s), timeout, option_ids, run_dir, 1): s for s in seats}
+        futs = {ex.submit(sit, s, cfg, p1, io_dir / "r1", seat_cwd(s), timeout, option_ids, run_dir, 1): s for s in seats}
         for f in cf.as_completed(futs):
             s = futs[f]
             res = f.result()
@@ -701,6 +721,7 @@ def cmd_run(args):
             st["history"].append(slim(res))
             st["status"], st["ballot"], st["model"] = res["status"], res.get("ballot"), res.get("model")
             st["level"] = res.get("level", 0)
+    publish_round("r1")
 
     # cross-examination rounds
     last_ratings = {}
@@ -722,11 +743,12 @@ def cmd_run(args):
         active = [s for s in seats if state[s["id"]].get("status") != "unattended"]
         results = {}
         with cf.ThreadPoolExecutor(max_workers=max(1, len(active))) as ex:
-            futs = {ex.submit(sit, s, cfg, prompt, run_dir / ("r%d" % rnd), seat_cwd(s), timeout, option_ids,
+            futs = {ex.submit(sit, s, cfg, prompt, io_dir / ("r%d" % rnd), seat_cwd(s), timeout, option_ids,
                               run_dir, rnd, state[s["id"]]["level"]): s for s in active}
             for f in cf.as_completed(futs):
                 results[futs[f]["id"]] = f.result()
         # written only after the round, so no seat could read it while voting
+        publish_round("r%d" % rnd)
         (run_dir / ("r%d_labels.json" % rnd)).write_text(encoding="utf-8", data=json.dumps(labels, indent=2))
         last_ratings = {}
         for sid, res in results.items():
@@ -745,6 +767,8 @@ def cmd_run(args):
         for sid in state:
             state[sid]["ratings_received"] = []
         for rater, ratings in last_ratings.items():
+            if state[rater].get("status") != "ok":
+                continue  # a ballot that does not count does not get to weigh others either
             for lab, val in ratings.items():
                 target = by_label.get(lab)
                 if target and target != rater:
@@ -840,7 +864,10 @@ def finish(run_dir, meta, state, options, cfg):
     if t["valid_votes"] < quorum:
         t["verdict"], t["no_quorum"] = None, True
     t["decided_by"] = "none"
-    if t["verdict"]:
+    if meta.get("workspace_changed"):
+        # a seat may have tampered with what it was judging: nothing about this run is actionable
+        t["council_verdict"], t["verdict"], t["decided_by"] = t["verdict"], None, "workspace_changed"
+    elif t["verdict"]:
         t["decided_by"] = "tiebreak" if t["tiebreak"] else "council"
     elif meta.get("default"):
         # nobody is there to ask: a council that cannot decide falls back to the brief's safe option
@@ -871,7 +898,10 @@ def render(result):
                 "read-only rule; check `git status` before trusting or keeping anything.", ""]
     undecided = ("NO QUORUM (%d valid ballot(s), need %d)" % (t["valid_votes"], meta["quorum"]) if t.get("no_quorum")
                  else "TIE (%s)" % t["tiebreak"])
-    if t.get("decided_by") == "default":
+    if t.get("decided_by") == "workspace_changed":
+        out.append("**Verdict: none, the workspace changed during the council** (the tally said %s). "
+                   "Do not act on this run." % (t.get("council_verdict") or "nothing"))
+    elif t.get("decided_by") == "default":
         v = t["verdict"]
         out.append("**Verdict: %s: %s (safe default)**: the council did not decide, %s, so the brief's default applies."
                    % (v, labels[v], undecided))
@@ -931,9 +961,13 @@ def render(result):
             out.append("- **%s** voted %s: %s" % (sid, b["vote"], b["summary"]))
             for e in b["evidence"][:3]:
                 out.append("  - [%s] %s (%s)" % (e["type"], e["claim"], e["source"] or "no source"))
-    risks = [(sid, x) for sid, st in seats.items() if st.get("ballot") for x in (st["ballot"].get("risks") or []) + (st["ballot"].get("conditions") or [])]
+    v_cond = [(sid, x) for sid, st in seats.items() if v and st.get("status") == "ok" and st["ballot"]["vote"] == v
+              for x in st["ballot"].get("conditions") or []]
+    if v_cond:
+        out += ["", "## Conditions attached to %s (carry these out with it)" % v, ""] + ["- (%s) %s" % (sid, x) for sid, x in v_cond]
+    risks = [(sid, x) for sid, st in seats.items() if st.get("ballot") for x in (st["ballot"].get("risks") or [])]
     if risks:
-        out += ["", "## Risks and conditions raised", ""] + ["- (%s) %s" % (sid, x) for sid, x in risks[:20]]
+        out += ["", "## Risks raised", ""] + ["- (%s) %s" % (sid, x) for sid, x in risks[:20]]
     out += ["", "Run finished %s. Full transcripts: r1/, r2/ ... next to this file." % result["finished"], ""]
     return "\n".join(out)
 
@@ -958,6 +992,10 @@ def cmd_status(args):
     if prog.exists():
         print(prog.read_text(encoding="utf-8").rstrip())
     if (run_dir / "decision.md").exists():
+        res = run_dir / "result.json"
+        if res.exists() and json.loads(res.read_text(encoding="utf-8")).get("workspace_changed"):
+            print("TAINTED (workspace changed during the council; do not act on it)")
+            return 4
         print("DONE")
         return 0
     pid = json.loads((run_dir / "meta.json").read_text(encoding="utf-8")).get("pid")

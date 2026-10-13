@@ -10,14 +10,14 @@ Every host starts the council detached, because a council outlives tool timeouts
 even `run_in_background` commands at their timeout):
 
 ```bash
-nohup python3 $S run --brief brief.md > "$TMPDIR/rt.log" 2>&1 &
-sleep 2; RUN=$(head -1 "$TMPDIR/rt.log")     # the run directory is the first line
-python3 $S status "$RUN"                     # STARTING / RUNNING / DONE / FAILED
+nohup python3 $S run --brief brief.md > "${TMPDIR:-/tmp}/rt.log" 2>&1 &
+sleep 2; RUN=$(head -1 "${TMPDIR:-/tmp}/rt.log")     # the run directory is the first line
+python3 $S status "$RUN"                     # STARTING / RUNNING / DONE / TAINTED / FAILED
 ```
 
 | Host | Waiting |
 |---|---|
-| Claude Code | a background `until python3 $S status "$RUN" \| grep -qE '^(DONE\|FAILED)'; do sleep 30; done`, re-armed if it times out |
+| Claude Code | a background `until python3 $S status "$RUN" \| grep -qE '^(DONE\|TAINTED\|FAILED)'; do sleep 30; done`, re-armed if it times out |
 | Codex CLI, Grok CLI, Antigravity, OpenCode, pi | call `status "$RUN"` every 1-2 minutes |
 | Orca | either of the above, or run the council in its own Orca terminal so the user can watch `progress.log` |
 
