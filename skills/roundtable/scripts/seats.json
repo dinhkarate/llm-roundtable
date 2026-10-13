@@ -7,18 +7,27 @@
   "adapters": {
     "claude": {
       "bin": "claude",
-      "argv": ["-p", "--model", "{model}", "--permission-mode", "plan", "--disable-slash-commands"],
-      "stdin": true
+      "argv": ["-p", "--model", "{model}", "--permission-mode", "dontAsk", "--strict-mcp-config", "--disable-slash-commands",
+               "--tools", "Read,Grep,Glob,WebSearch,WebFetch,Bash",
+               "--allowedTools", "Read", "Grep", "Glob", "WebSearch", "WebFetch",
+               "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(wc:*)", "Bash(grep:*)", "Bash(rg:*)",
+               "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)", "Bash(git blame:*)", "Bash(git ls-files:*)",
+               "Bash(python3 -m unittest:*)"],
+      "stdin": true,
+      "_note": "plan mode injects 'spawn agents, ExitPlanMode' instructions; dontAsk + read-only allowlist denies everything else; --strict-mcp-config drops MCP servers that publish externally"
     },
     "codex": {
       "bin": "codex",
-      "argv": ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "-m", "{model}", "-o", "{out_file}", "-"],
+      "argv": ["exec", "--skip-git-repo-check", "--ephemeral", "-s", "read-only", "--disable", "apps", "--disable", "computer_use",
+               "--disable", "browser_use", "-m", "{model}", "-o", "{out_file}", "-"],
       "stdin": true,
-      "output": "out_file"
+      "output": "out_file",
+      "_note": "apps/computer_use/browser_use expose 100+ tools that can deploy, share or click; a council seat needs none of them"
     },
     "grok": {
       "bin": "grok",
-      "argv": ["-m", "{model}", "--permission-mode", "plan", "--prompt-file", "{prompt_file}"]
+      "argv": ["-m", "{model}", "--sandbox", "read-only", "--always-approve", "--prompt-file", "{prompt_file}"],
+      "_note": "plan mode ends headless runs with exit_plan_mode and prints only the opening line; read-only sandbox is kernel-enforced outside temp dirs"
     },
     "agy": {
       "bin": "agy",

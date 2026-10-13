@@ -31,6 +31,26 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(b["confidence"], 1.0)
         self.assertEqual(b["ratings"], {"M1": 2})
 
+    def test_prefers_ballot_with_valid_vote(self):
+        text = 'example {"vote": "<option id>"} ... broken {"vote": "B", "risks": [] junk} final {"vote": "A", "evidence": []}'
+        self.assertEqual(rt.parse_ballot(text, ["A", "B"])["vote"], "A")
+        self.assertEqual(rt.parse_ballot('{"vote": "Z"}', ["A", "B"])["vote"], "Z")
+
+    def test_nested_vote_in_rebuttal_is_ignored(self):
+        text = '{"vote": "B", "evidence": [], "rebuttals": [{"member": "M1", "quote": {"vote": "A"}}]}'
+        self.assertEqual(rt.parse_ballot(text, ["A", "B"])["vote"], "B")
+
+    def test_malformed_fields_do_not_raise(self):
+        b = rt.normalize_ballot({"vote": "A", "ratings": ["M1", 2], "evidence": 5, "confidence": float("inf"),
+                                 "risks": "one risk"}, ["A", "B"])
+        self.assertEqual((b["ratings"], b["evidence"], b["confidence"], b["risks"]), ({}, [], 0.5, ["one risk"]))
+        b = rt.normalize_ballot({"vote": "A", "ratings": {"M1": "inf", "M2": 1}}, ["A", "B"])
+        self.assertEqual(b["ratings"], {"M2": 1})
+
+    def test_fact_without_source_is_an_assumption(self):
+        r = rt.classify({"rc": 0, "text": '{"vote": "A", "evidence": [{"type": "FACT", "claim": "x", "source": ""}]}', "noise": ""}, ["A", "B"])
+        self.assertEqual(r["status"], "no_evidence")
+
     def test_classify_quota_and_unavailable(self):
         q = rt.classify({"rc": 1, "text": "", "noise": "Error: rate limit exceeded"}, ["A", "B"])
         u = rt.classify({"rc": 1, "text": "", "noise": "Couldn't set model: unknown model id"}, ["A", "B"])
@@ -55,6 +75,11 @@ class TallyTest(unittest.TestCase):
         st = {"a": seat_state("A", received=[0, 0]), "b": seat_state("A", received=[0]), "c": seat_state("B", received=[2, 2])}
         self.assertEqual(rt.tally(st, OPTS)["verdict"], "B")
         self.assertEqual(rt.tally(st, OPTS, "count")["verdict"], "A")
+
+    def test_count_mode_uses_score_before_fable(self):
+        st = {"fable": seat_state("B", tiebreak=True, received=[0]), "x": seat_state("A", received=[2])}
+        t = rt.tally(st, OPTS, "count")
+        self.assertEqual((t["verdict"], t["tiebreak"]), ("A", None))
 
     def test_tie_goes_to_fable(self):
         t = rt.tally({"fable": seat_state("B", tiebreak=True), "opus": seat_state("A")}, OPTS)
@@ -83,7 +108,7 @@ class EndToEndTest(unittest.TestCase):
         p = subprocess.run([sys.executable, str(SCRIPT), "--config", str(tmp / "cfg.json"), "run", "--brief", str(tmp / "brief.md"),
                             "--seats", "t", "--out", str(tmp / "run"), "--seed", "1", "--timeout", "60", *extra],
                            capture_output=True, text=True, env=env)
-        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(p.returncode, (0, 3), p.stderr)
         return json.loads((tmp / "run/result.json").read_text()), (tmp / "run/decision.md").read_text()
 
     def test_fallback_unattended_and_fable_tiebreak(self):
@@ -128,6 +153,22 @@ class EndToEndTest(unittest.TestCase):
         res, md = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1", "--workspace", str(ws)])
         self.assertTrue(res["workspace_changed"])
         self.assertIn("WARNING", md)
+
+    def test_missing_ballot_gets_one_nudge(self):
+        seats = [{"id": "a", "adapter": "fake", "models": ["lazy-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A"]}]
+        res, _ = self.run_council(seats, {"t": ["a", "b"]}, ["--rounds", "1"])
+        self.assertEqual(res["seats"]["a"]["status"], "ok")
+
+    def test_status_reports_dead_runner(self):
+        tmp = Path(tempfile.mkdtemp())
+        run = tmp / "runs" / "20260101-000000-x"
+        run.mkdir(parents=True)
+        (run / "meta.json").write_text(json.dumps({"pid": 999999}))
+        (tmp / "runs" / "doctor-20990101-000000").mkdir()  # newer, but not a run
+        p = subprocess.run([sys.executable, str(SCRIPT), "status"], capture_output=True, text=True,
+                           env=dict(os.environ, ROUNDTABLE_RUNS=str(tmp / "runs")))
+        self.assertIn("FAILED", p.stdout)
+        self.assertIn("20260101-000000-x", p.stdout)
 
     def test_recursion_guard(self):
         p = subprocess.run([sys.executable, str(SCRIPT), "run", "--brief", "-"], input="x", capture_output=True, text=True,

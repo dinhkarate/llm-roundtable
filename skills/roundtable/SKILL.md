@@ -52,10 +52,19 @@ python3 $S doctor                 # who can sit (CLI on PATH); add --probe to pi
 python3 $S run --brief brief.md   # full council, 2 rounds
 ```
 
-The run takes minutes. Do not block a short tool timeout on it:
-- Claude Code: Bash with `run_in_background: true`, wait for the completion notice.
-- Codex / Grok / Antigravity / OpenCode / pi: `nohup python3 $S run ... > rt.log 2>&1 &`, then poll
-  `python3 $S status` every 1-2 minutes until it prints `DONE`.
+A council takes 5-20 minutes, longer than most tool timeouts (Claude Code stops even background
+commands at their timeout). On every host, start it detached and poll:
+
+```bash
+nohup python3 $S run --brief brief.md > "$TMPDIR/rt.log" 2>&1 &
+python3 $S status        # every 1-2 min: RUNNING / DONE / FAILED (runner died: read rt.log)
+```
+
+In Claude Code you may wait with a background `until python3 $S status | grep -qE '^(DONE|FAILED)'; do sleep 30; done`
+(re-arm it if it times out) instead of polling by hand.
+
+Exit code 3 / a WARNING banner in decision.md means files in `--workspace` changed while the council
+ran. Run `git status` there and tell the user before trusting anything.
 
 Useful flags: `--seats duo` (Fable + Opus only), `--seats fable,codex,grok`, `--rounds 1`
 (blind vote, cheapest) or `3`, `--workspace .` (members may read the repo, read-only),

@@ -74,10 +74,10 @@ _log_lock = threading.Lock()
 # ---------------------------------------------------------------- config
 
 def load_config(path=None):
-    cfg = json.loads(DEFAULT_CONFIG.read_text())
+    cfg = json.loads(DEFAULT_CONFIG.read_text(encoding="utf-8"))
     user = Path(path) if path else USER_CONFIG
     if user.exists():
-        over = json.loads(user.read_text())
+        over = json.loads(user.read_text(encoding="utf-8"))
         for key in ("adapters", "presets"):
             cfg[key].update(over.get(key, {}))
         by_id = {s["id"]: s for s in cfg["seats"]}
@@ -95,27 +95,27 @@ def load_config(path=None):
 def remember_dead(model):
     """Models a CLI reported as deprecated; auto-selection skips them next time."""
     with _log_lock:
-        dead = set(json.loads(DEAD_FILE.read_text())) if DEAD_FILE.exists() else set()
+        dead = set(json.loads(DEAD_FILE.read_text(encoding="utf-8"))) if DEAD_FILE.exists() else set()
         dead.add(model)
         DEAD_FILE.parent.mkdir(parents=True, exist_ok=True)
-        DEAD_FILE.write_text(json.dumps(sorted(dead)))
+        DEAD_FILE.write_text(encoding="utf-8", data=json.dumps(sorted(dead)))
 
 
 def models_dev_opencode():
     """Release dates of opencode models from models.dev, cached for a day (stale cache beats nothing)."""
     cache = RUNS_DIR.parent / "models-dev-opencode.json"
     if cache.exists() and time.time() - cache.stat().st_mtime < 86400:
-        return json.loads(cache.read_text())
+        return json.loads(cache.read_text(encoding="utf-8"))
     try:
         req = urllib.request.Request(MODELS_DEV, headers={"User-Agent": "roundtable/1 (+https://github.com/dinhkarate/roundtable)"})
         with urllib.request.urlopen(req, timeout=15) as r:
             meta = json.load(r).get("opencode", {}).get("models", {})
         cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(meta))
+        cache.write_text(encoding="utf-8", data=json.dumps(meta))
         return meta
     except Exception as e:
         print("warning: models.dev unavailable (%s); opencode models ordered without release dates" % e, file=sys.stderr)
-        return json.loads(cache.read_text()) if cache.exists() else {}
+        return json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
 
 
 def opencode_free_models(exclude):
@@ -126,14 +126,14 @@ def opencode_free_models(exclude):
     # the background service sometimes answers with an empty list while it warms up
     for argv in (["opencode", "models"], ["opencode", "models", "--standalone"]):
         try:
-            out = subprocess.run(argv, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=90).stdout
+            out = subprocess.run(argv, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=90).stdout
         except (subprocess.SubprocessError, OSError):
             continue
         listed = [l.strip() for l in out.splitlines() if l.strip().startswith("opencode/")]
         if listed:
             break
     meta = models_dev_opencode()
-    dead = set(json.loads(DEAD_FILE.read_text())) if DEAD_FILE.exists() else set()
+    dead = set(json.loads(DEAD_FILE.read_text(encoding="utf-8"))) if DEAD_FILE.exists() else set()
     ex = re.compile(exclude, re.I) if exclude else None
     rows = []
     for full in listed:
@@ -195,7 +195,7 @@ def resolve_seats(cfg, names, private=False):
 def log(run_dir, msg):
     line = "%s %s" % (dt.datetime.now().strftime("%H:%M:%S"), msg)
     with _log_lock:
-        with open(run_dir / "progress.log", "a") as f:
+        with open(run_dir / "progress.log", "a", encoding="utf-8") as f:
             f.write(line + "\n")
         print(line, file=sys.stderr, flush=True)
 
@@ -210,7 +210,7 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
     seat_dir.mkdir(parents=True, exist_ok=True)
     prompt_file = seat_dir / "prompt.md"
     out_file = seat_dir / "last_message.txt"
-    prompt_file.write_text(prompt)
+    prompt_file.write_text(encoding="utf-8", data=prompt)
     if out_file.exists():
         out_file.unlink()
     exe = shutil.which(adapter["bin"])
@@ -220,11 +220,11 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
     argv = [exe] + [fill(a, values) for a in adapter["argv"]]
     env = dict(os.environ, ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
     start = time.time()
-    stdin = open(prompt_file) if adapter.get("stdin") else subprocess.DEVNULL
+    stdin = open(prompt_file, encoding="utf-8") if adapter.get("stdin") else subprocess.DEVNULL
     kw = {"start_new_session": True} if os.name != "nt" else {}
     try:
         p = subprocess.Popen(argv, cwd=str(cwd), stdin=stdin, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, env=env, text=True, errors="replace", **kw)
+                             stderr=subprocess.PIPE, env=env, text=True, encoding="utf-8", errors="replace", **kw)
         try:
             out, err = p.communicate(timeout=timeout)
             rc = p.returncode
@@ -239,11 +239,11 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
         if stdin is not subprocess.DEVNULL:
             stdin.close()
     secs = round(time.time() - start, 1)
-    (seat_dir / "stdout.txt").write_text(out or "")
-    (seat_dir / "stderr.txt").write_text(err or "")
+    (seat_dir / "stdout.txt").write_text(encoding="utf-8", data=out or "")
+    (seat_dir / "stderr.txt").write_text(encoding="utf-8", data=err or "")
     text = out or ""
     if adapter.get("output") == "out_file" and out_file.exists():
-        text = out_file.read_text()
+        text = out_file.read_text(encoding="utf-8")
     res = {"rc": rc, "secs": secs, "text": ANSI_RE.sub("", text), "noise": ANSI_RE.sub("", (out or "") + "\n" + (err or ""))}
     if rc is None:
         res["status"] = "timeout"
@@ -251,60 +251,77 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
     return res
 
 
-def parse_ballot(text):
-    """Return the last JSON object in text that has a "vote" key, or None."""
+def parse_ballot(text, option_ids=None):
+    """The last top-level JSON object in text with a "vote" key, preferring one whose vote is a valid option.
+    Objects nested inside another (e.g. a rebuttal quoting {"vote": ...}) are never picked."""
     dec = json.JSONDecoder()
-    idx = [i for i, ch in enumerate(text) if ch == "{"]
-    for i in reversed(idx):
+    top, i = [], text.find("{")
+    while i != -1:
         try:
-            obj, _ = dec.raw_decode(text, i)
+            obj, end = dec.raw_decode(text, i)
         except ValueError:
+            i = text.find("{", i + 1)
             continue
         if isinstance(obj, dict) and "vote" in obj:
+            top.append(obj)
+        i = text.find("{", end)
+    for obj in reversed(top):
+        if not option_ids or str(obj["vote"]).strip().upper() in option_ids:
             return obj
-    return None
+    return top[-1] if top else None
+
+
+def _list(x):
+    return x if isinstance(x, list) else ([] if x in (None, "") else [x])
+
+
+def _num(x, default):
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return default
+    return v if v == v and v not in (float("inf"), float("-inf")) else default
 
 
 def normalize_ballot(obj, option_ids):
+    """Coerce whatever the model returned into a ballot; malformed fields are dropped, never raised."""
     vote = str(obj.get("vote", "")).strip().upper()
     if vote not in option_ids:
         m = re.match(r"^\(?([A-Z0-9_]+)\)?\b", vote)
         vote = m.group(1) if m and m.group(1) in option_ids else None
     evidence = []
-    for e in obj.get("evidence") or []:
-        if isinstance(e, dict) and str(e.get("claim", "")).strip():
-            evidence.append({
-                "type": str(e.get("type", "ASSUMPTION")).upper(),
-                "claim": str(e["claim"]).strip(),
-                "source": str(e.get("source", "")).strip(),
-            })
-    try:
-        conf = max(0.0, min(1.0, float(obj.get("confidence", 0.5))))
-    except (TypeError, ValueError):
-        conf = 0.5
+    for e in _list(obj.get("evidence")):
+        if not isinstance(e, dict) or not str(e.get("claim", "")).strip():
+            continue
+        etype = str(e.get("type", "ASSUMPTION")).strip().upper()
+        source = str(e.get("source", "") or "").strip()
+        if etype == "FACT" and not source:
+            etype = "ASSUMPTION"  # a fact nobody can check is an assumption
+        evidence.append({"type": etype, "claim": str(e["claim"]).strip(), "source": source})
     ratings = {}
-    for k, v in (obj.get("ratings") or {}).items():
-        try:
-            ratings[str(k).strip().upper()] = max(0, min(2, int(round(float(v)))))
-        except (TypeError, ValueError):
-            pass
+    raw = obj.get("ratings")
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            n = _num(v, None)
+            if n is not None:
+                ratings[str(k).strip().upper()] = max(0, min(2, int(round(n))))
     return {
         "vote": vote,
-        "confidence": conf,
-        "summary": str(obj.get("summary", "")).strip(),
+        "confidence": max(0.0, min(1.0, _num(obj.get("confidence"), 0.5))),
+        "summary": str(obj.get("summary", "") or "").strip(),
         "evidence": evidence,
-        "risks": [str(x) for x in obj.get("risks") or []],
-        "conditions": [str(x) for x in obj.get("conditions") or []],
-        "rebuttals": [r for r in obj.get("rebuttals") or [] if isinstance(r, dict)],
+        "risks": [str(x) for x in _list(obj.get("risks"))],
+        "conditions": [str(x) for x in _list(obj.get("conditions"))],
+        "rebuttals": [r for r in _list(obj.get("rebuttals")) if isinstance(r, dict)],
         "ratings": ratings,
-        "decisive_evidence": [str(x) for x in obj.get("decisive_evidence") or []],
+        "decisive_evidence": [str(x) for x in _list(obj.get("decisive_evidence"))],
     }
 
 
 def classify(res, option_ids):
     if res.get("status") in ("missing", "timeout"):
         return res
-    obj = parse_ballot(res["text"]) or (parse_ballot(res["noise"]) if res.get("rc") == 0 else None)
+    obj = parse_ballot(res["text"], option_ids) or (parse_ballot(res["noise"], option_ids) if res.get("rc") == 0 else None)
     if obj is not None:
         ballot = normalize_ballot(obj, option_ids)
         res["ballot"] = ballot
@@ -330,6 +347,15 @@ def classify(res, option_ids):
 
 
 def sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, start_at=0):
+    """Never raises: a crash inside one seat must not take the council down."""
+    try:
+        return _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, start_at)
+    except Exception as e:  # noqa: BLE001
+        log(run_dir, "r%d %-10s crashed: %r" % (rnd, seat["id"], e))
+        return {"status": "unattended", "detail": "orchestrator error: %r" % e, "attempts": []}
+
+
+def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, start_at=0):
     """Ask one seat, walking its model chain (primary -> one fallback) on quota/unavailable/error."""
     attempts = []
     adapter = cfg["adapters"].get(seat["adapter"])
@@ -342,6 +368,15 @@ def sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, star
             continue
         res = call_cli(adapter, model, prompt, rnd_dir / seat["id"] / str(i), cwd, timeout, seat["id"])
         res = classify(res, option_ids)
+        if res["status"] == "invalid":
+            # agent CLIs sometimes end the turn early (a tool was denied, it only announced a plan) or emit
+            # broken JSON: one nudge, same model, not counted as a fallback
+            log(run_dir, "r%d %-10s %-24s %-11s %ss retrying once: %s" % (rnd, seat["id"], model, "invalid", res.get("secs"), res.get("detail", "")[:120]))
+            nudge = (prompt + "\n\nIMPORTANT: a previous attempt ended without a usable JSON ballot (%s; it ended with: %r). "
+                     "If a tool or command is not permitted, continue without it. Do not stop until you have "
+                     "printed the fenced JSON block: valid JSON, with \"vote\" exactly one of %s."
+                     % (res.get("detail", ""), res["text"].strip()[-300:], ", ".join(option_ids)))
+            res = classify(call_cli(adapter, model, nudge, rnd_dir / seat["id"] / ("%d-retry" % i), cwd, timeout, seat["id"]), option_ids)
         res["model"], res["level"] = model, i
         if res["status"] == "unavailable" and "deprecated" in res.get("detail", "").lower():
             remember_dead(model)
@@ -413,6 +448,12 @@ Answer: a short analysis, then END with exactly one fenced JSON block:
 """
 
 
+def redact(text):
+    for rx in SECRET_RES:
+        text = rx.sub("[REDACTED]", text)
+    return text
+
+
 def dossier(positions):
     parts = []
     for label, b in positions:
@@ -427,7 +468,7 @@ def dossier(positions):
     return "\n\n".join(parts)
 
 
-def prompt_cross(brief, options, workspace, positions, rnd, total):
+def prompt_cross(brief, options, workspace, positions, rnd, total, redact_fn=None):
     labels = ", ".join(l for l, _ in positions)
     return f"""You are one member of a decision council ("roundtable"). Round {rnd} of {total}: cross-examination.
 Below are the brief and the positions of ALL members from the previous round, anonymized as {labels}.
@@ -450,7 +491,7 @@ Rules
 {options_block(options)}
 
 === POSITIONS FROM THE PREVIOUS ROUND ===
-{dossier(positions)}
+{(redact_fn or (lambda t: t))(dossier(positions))}
 
 Answer: a short critique, then END with exactly one fenced JSON block:
 {BALLOT_SCHEMA_RX}
@@ -485,7 +526,7 @@ def tally(seats_state, options, decision_rule="weighted"):
     if decision_rule == "weighted":
         tied = [o for o in option_ids if abs(score[o] - score[top]) < 1e-9]
     else:
-        tied = [o for o in option_ids if count[o] == count[top]]
+        tied = [o for o in option_ids if count[o] == count[top] and abs(score[o] - score[top]) < 1e-9]
     verdict, tiebreak = top, None
     if len(tied) > 1:
         breakers = [sid for sid, st in seats_state.items() if st.get("tiebreak") and st.get("status") == "ok"
@@ -540,7 +581,7 @@ def cmd_run(args):
     if os.environ.get("ROUNDTABLE_SEAT"):
         raise SystemExit("refusing to convene a council from inside a council seat (ROUNDTABLE_SEAT=%s)" % os.environ["ROUNDTABLE_SEAT"])
     cfg = load_config(args.config)
-    brief = Path(args.brief).read_text() if args.brief != "-" else sys.stdin.read()
+    brief = Path(args.brief).read_text(encoding="utf-8") if args.brief != "-" else sys.stdin.read()
     options = parse_options(args, brief)
     option_ids = [o for o, _ in options]
     hits = secret_scan(brief)
@@ -553,13 +594,13 @@ def cmd_run(args):
     title = args.title or (brief.strip().splitlines() or ["decision"])[0].lstrip("# ").strip()
     run_dir = Path(args.out).resolve() if args.out else RUNS_DIR / ("%s-%s" % (dt.datetime.now().strftime("%Y%m%d-%H%M%S"), slugify(title)))
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "brief.md").write_text(brief)
+    (run_dir / "brief.md").write_text(encoding="utf-8", data=brief)
     workspace = Path(args.workspace).resolve() if args.workspace else None
     meta = {"title": title, "options": options, "rounds": rounds, "timeout": timeout, "mode": args.mode,
             "workspace": str(workspace) if workspace else None, "private": args.private,
             "decision_rule": cfg.get("decision_rule", "weighted"), "quorum": cfg.get("quorum", 2),
-            "seats": seats, "skipped": skipped, "started": dt.datetime.now().isoformat(timespec="seconds")}
-    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False))
+            "seats": seats, "skipped": skipped, "started": dt.datetime.now().isoformat(timespec="seconds"), "pid": os.getpid()}
+    (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
     print(str(run_dir), flush=True)
     log(run_dir, "council: %s | options %s | rounds %d" % (", ".join(s["id"] for s in seats), ",".join(option_ids), rounds))
 
@@ -599,8 +640,11 @@ def cmd_run(args):
         rng.shuffle(speaking)
         labels = {sid: "M%d" % (i + 1) for i, sid in enumerate(speaking)}
         positions = [(labels[sid], state[sid]["ballot"]) for sid in speaking]
-        (run_dir / ("r%d_labels.json" % rnd)).write_text(json.dumps(labels, indent=2))
+        (run_dir / ("r%d_labels.json" % rnd)).write_text(encoding="utf-8", data=json.dumps(labels, indent=2))
         prompt = prompt_cross(brief, options, workspace, positions, rnd, rounds)
+        if secret_scan(dossier(positions)):
+            log(run_dir, "r%d: redacted secret-looking strings that seats quoted, before sharing them" % rnd)
+            prompt = prompt_cross(brief, options, workspace, positions, rnd, rounds, redact_fn=redact)
         active = [s for s in seats if state[s["id"]].get("status") != "unattended"]
         results = {}
         with cf.ThreadPoolExecutor(max_workers=max(1, len(active))) as ex:
@@ -634,21 +678,28 @@ def cmd_run(args):
 
     if fp_before is not None and workspace_fingerprint(workspace) != fp_before:
         meta["workspace_changed"] = True
+        (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
         log(run_dir, "WARNING: the workspace changed during the council (git status/diff differ); a seat may have written files")
     finish(run_dir, meta, state, options, cfg)
-    return 0
+    return 3 if meta.get("workspace_changed") else 0
 
 
 def workspace_fingerprint(ws):
-    """git status + diff of the workspace, to catch a seat that broke the read-only rule."""
+    """HEAD + status + tracked diff + hashes of untracked files, to catch a seat that broke the read-only rule.
+    Ignored files (caches, __pycache__) are not covered."""
     if not ws or not (ws / ".git").exists():
         return None
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(ws)] + list(a), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout
+
     try:
-        st = subprocess.run(["git", "-C", str(ws), "status", "--porcelain", "-uall"], capture_output=True, text=True, timeout=60).stdout
-        df = subprocess.run(["git", "-C", str(ws), "diff", "HEAD"], capture_output=True, text=True, timeout=60).stdout
+        untracked = [l for l in git("ls-files", "-o", "--exclude-standard", "-z").split("\0") if l]
+        hashes = subprocess.run(["git", "-C", str(ws), "hash-object", "--stdin-paths"], input="\n".join(untracked),
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120).stdout if untracked else ""
+        return "\0".join([git("rev-parse", "HEAD"), git("status", "--porcelain", "-uall"), git("diff", "HEAD"), hashes])
     except (subprocess.SubprocessError, OSError):
         return None
-    return st + "\0" + df
 
 
 def slim(res):
@@ -668,10 +719,10 @@ def finish(run_dir, meta, state, options, cfg):
                                                       "carried", "ratings_received")}
                         for sid, st in state.items()},
               "skipped": meta.get("skipped", [])}
-    (run_dir / "result.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
-    (run_dir / "decision.md").write_text(render(result))
+    (run_dir / "result.json").write_text(encoding="utf-8", data=json.dumps(result, indent=2, ensure_ascii=False))
+    (run_dir / "decision.md").write_text(encoding="utf-8", data=render(result))
     log(run_dir, "done: verdict %s" % (t["verdict"] or ("NO QUORUM" if t.get("no_quorum") else "TIE")))
-    print((run_dir / "decision.md").read_text())
+    print((run_dir / "decision.md").read_text(encoding="utf-8"))
 
 
 def render(result):
@@ -748,8 +799,8 @@ def render(result):
 
 def cmd_tally(args):
     run_dir = Path(args.run)
-    res = json.loads((run_dir / "result.json").read_text())
-    meta = json.loads((run_dir / "meta.json").read_text())
+    res = json.loads((run_dir / "result.json").read_text(encoding="utf-8"))
+    meta = json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))
     meta["options"] = [tuple(o) for o in meta["options"]]
     cfg = load_config(args.config)
     finish(run_dir, meta, res["seats"], meta["options"], cfg)
@@ -757,15 +808,29 @@ def cmd_tally(args):
 
 
 def cmd_status(args):
-    run_dir = Path(args.run) if args.run else max(RUNS_DIR.glob("*"), key=lambda p: p.stat().st_mtime, default=None)
+    runs = [p for p in RUNS_DIR.glob("*") if (p / "meta.json").exists()]
+    run_dir = Path(args.run) if args.run else max(runs, key=lambda p: p.stat().st_mtime, default=None)
     if not run_dir or not run_dir.exists():
-        raise SystemExit("no run found")
+        raise SystemExit("no run found in %s" % RUNS_DIR)
     print(run_dir)
     prog = run_dir / "progress.log"
     if prog.exists():
-        print(prog.read_text().rstrip())
-    print("DONE" if (run_dir / "decision.md").exists() else "RUNNING")
-    return 0
+        print(prog.read_text(encoding="utf-8").rstrip())
+    if (run_dir / "decision.md").exists():
+        print("DONE")
+        return 0
+    pid = json.loads((run_dir / "meta.json").read_text(encoding="utf-8")).get("pid")
+    alive = False
+    if pid:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except PermissionError:
+            alive = True
+        except OSError:
+            alive = False
+    print("RUNNING" if alive else "FAILED (runner exited without decision.md; see rt log / progress.log)")
+    return 0 if alive else 1
 
 
 def cmd_doctor(args):

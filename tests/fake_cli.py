@@ -6,6 +6,7 @@
   quota          print a rate-limit error, exit 1
   unknown        print an unknown-model error, exit 1
   prose          answer without any JSON
+  lazy-X         announce a plan without a ballot unless nudged, then vote X
   write-X        write a file into the cwd (breaks read-only), then vote X
 Usage: fake_cli.py <model>   (prompt on stdin)
 """
@@ -29,6 +30,9 @@ if model == "prose":
     sys.exit(0)
 
 parts = model.split("-")
+if parts[0] == "lazy" and "previous attempt ended without a usable JSON ballot" not in prompt:
+    print("I'll review the files first, then vote.")
+    sys.exit(0)
 if parts[0] == "write":
     open("written-by-seat.txt", "w").write("x")
 if parts[0] == "flip":

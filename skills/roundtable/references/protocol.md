@@ -5,9 +5,22 @@
 - **Moderator**: the agent the user is talking to. Writes the brief, runs the script, reports.
   Does not vote, does not edit ballots.
 - **Seats**: one CLI process per member per round, fresh session each time (`--ephemeral`,
-  `-p`), read-only (`claude --permission-mode plan`, `codex -s read-only`, `grok --permission-mode plan`,
-  `agy --sandbox`, `opencode --agent plan`). Each call gets `ROUNDTABLE_SEAT=<id>` so a seat
-  that loads this skill cannot start a nested council.
+  `-p`), read-only and without publishing tools:
+
+  | CLI | Read-only by | Outward tools removed |
+  |---|---|---|
+  | claude | `--permission-mode dontAsk` + allowlist (Read/Grep/Glob/Web*, read-only Bash, `python3 -m unittest`) | `--strict-mcp-config` (no MCP servers), `--tools` without Agent |
+  | codex | `-s read-only` sandbox (kernel) | `--disable apps computer_use browser_use` |
+  | grok | `--sandbox read-only` (kernel; temp dirs stay writable) | no MCP configured |
+  | agy | `--sandbox` (terminal only) + prompt; skip-permissions so headless web reads work | no MCP configured |
+  | opencode | `--agent plan` | no MCP configured |
+
+  Plan modes are avoided on claude and grok: they inject "write a plan, exit plan mode" instructions
+  and end headless runs before the ballot. Each call gets `ROUNDTABLE_SEAT=<id>` so a seat that loads
+  this skill cannot start a nested council. With `--workspace`, the script fingerprints the git
+  checkout (HEAD, status, diff, untracked file hashes) before and after; any change gives a WARNING
+  banner and exit code 3. Secret-looking strings that seats quote are redacted before the
+  cross-exam dossier goes to the other vendors.
 
 ## Rounds
 

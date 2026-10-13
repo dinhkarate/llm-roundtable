@@ -76,6 +76,16 @@ Ghi chú CLI rút ra khi thử:
 - `grok -p` bị lấy làm prompt nếu đứng trước cờ khác → dùng `--prompt-file`.
 - models.dev trả 403 nếu không có User-Agent → script gửi UA và cache 1 ngày.
 - grok-4.7 từ chối prompt kiểu "reply with exactly ..." → probe dùng câu hỏi thật.
+- `opencode models` đôi khi trả rỗng khi service nền đang khởi động → thử lại với `--standalone`.
+- agy headless tự từ chối `read_url` (không có ai để hỏi quyền) và trả rỗng ở vòng chất vấn → chạy
+  `--sandbox --dangerously-skip-permissions`; bù lại, script so `git status`/`git diff` của workspace
+  trước và sau, có thay đổi thì in WARNING trong decision.md.
+- grok-4.7 có lúc chỉ nói "tôi sẽ đọc file trước…" rồi kết thúc lượt → mọi ghế trả lời không có phiếu
+  sẽ được gọi lại đúng một lần với lời nhắc phải in phiếu JSON (không tính là fallback).
+- `--out` tương đối làm grok không thấy prompt file (cwd khác) → mọi đường dẫn đều resolve tuyệt đối.
+
+Phiên thật đầu tiên (brief: skill này nên nằm ở repo riêng hay trong pi-skill) → 4/4 phiếu hợp lệ chọn
+repo riêng; Fable/Opus/Codex dẫn README vercel-labs/skills và tài liệu GitHub Actions làm bằng chứng.
 
 ## 5. Việc còn mở
 
