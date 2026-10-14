@@ -98,8 +98,9 @@ llm-roundtable run --brief q.md --seats duo
 # Cheapest: one blind round
 llm-roundtable run --brief q.md --rounds 1
 
-# Progress of a running council
-llm-roundtable status
+# Start detached (returns the run directory at once), then poll
+RUN=$(llm-roundtable run --brief q.md --detach)
+llm-roundtable status "$RUN"     # ... DONE, then VERDICT: ...
 ```
 </details>
 

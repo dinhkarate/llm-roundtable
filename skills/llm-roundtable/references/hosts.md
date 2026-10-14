@@ -6,22 +6,33 @@ agent with a shell tool. Install the skill for every agent with
 
 ## Running from each host
 
-Every host starts the council detached, because a council outlives tool timeouts (Claude Code stops
-even `run_in_background` commands at their timeout):
+Every host starts the council with `--detach`, because a council outlives tool timeouts and some hosts
+kill whatever a tool call started once the call returns (Codex does; `nohup ... &` does not survive it):
 
 ```bash
-nohup python3 $S run --brief brief.md > "${TMPDIR:-/tmp}/rt.log" 2>&1 &
-sleep 2; RUN=$(head -1 "${TMPDIR:-/tmp}/rt.log")     # the run directory is the first line
-python3 $S status "$RUN"                     # STARTING / RUNNING / DONE / TAINTED / FAILED
+RUN=$(python3 $S run --brief brief.md --detach)   # the run directory; the council continues in its own session
+python3 $S status "$RUN"                          # STARTING / RUNNING / DONE / TAINTED / FAILED, then VERDICT: ...
 ```
 
 | Host | Waiting |
 |---|---|
 | Claude Code | a background `until python3 $S status "$RUN" \| grep -qE '^(DONE\|TAINTED\|FAILED)'; do sleep 30; done`, re-armed if it times out |
-| Codex CLI, Grok CLI, Antigravity, OpenCode, pi | call `status "$RUN"` every 1-2 minutes |
+| Codex CLI, Grok CLI, Antigravity, OpenCode, pi | call `status "$RUN"` every 1-2 minutes (Antigravity: a 60 s timer works) |
 | Orca | either of the above, or run the council in its own Orca terminal so the user can watch `progress.log` |
 
 `$S` = `<skill dir>/scripts/roundtable.py`. `python3 $S doctor` shows which seats this host can fill.
+
+## Where each host finds the skill
+
+Tested 2026-10-14 by asking each CLI, headless, to find the skill and run a `duo` council:
+
+| Host | Skill found at | Notes |
+|---|---|---|
+| Claude Code | `~/.claude/skills/llm-roundtable` (symlink to `~/.agents/skills`) | listed as a skill |
+| Codex CLI | `~/.agents/skills/llm-roundtable` | needed `--detach`: Codex killed the `nohup` runner when the tool call returned |
+| Grok CLI | `~/.grok/skills/llm-roundtable` | listed as a skill |
+| OpenCode | `~/.agents/skills/llm-roundtable` | loaded through its Skill tool |
+| Antigravity (agy) | `~/.agents/skills/llm-roundtable` | not listed among agy's skills; agy found it by searching the filesystem |
 
 ## Logins each seat needs
 

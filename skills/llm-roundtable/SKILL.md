@@ -1,7 +1,7 @@
 ---
 name: llm-roundtable
 description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
-version: 0.1.0
+version: 0.1.1
 tags: [decision, review, multi-model, debate, voting, council]
 ---
 
@@ -57,14 +57,18 @@ python3 $S doctor                 # who can sit (CLI on PATH); add --probe to pi
 python3 $S run --brief brief.md   # full council, 2 rounds
 ```
 
-A council takes 5-20 minutes, longer than most tool timeouts (Claude Code stops even background
-commands at their timeout). On every host, start it detached and poll:
+A council takes 5-20 minutes, longer than most tool timeouts. On every host, start it with `--detach`:
+it prints the run directory and returns at once, while the council keeps running in its own session
+(a plain `nohup ... &` dies on hosts that kill a tool call's processes when the call returns, e.g. Codex).
 
 ```bash
-nohup python3 $S run --brief brief.md > "${TMPDIR:-/tmp}/rt.log" 2>&1 &
-sleep 2; RUN=$(head -1 "${TMPDIR:-/tmp}/rt.log")   # first line = run directory
+RUN=$(python3 $S run --brief brief.md --default B --detach)   # prints the run directory
 python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / TAINTED / FAILED
 ```
+
+When it is finished, `status` ends with the same `VERDICT: ...` line as a foreground run. Runs live in
+`~/.roundtable/runs/` (set `ROUNDTABLE_RUNS` to put them elsewhere); the runner's own output is in
+`$RUN/runner.log`.
 
 On a laptop keep the lid open or the machine on power: a sleeping host stalls every seat
 (the script holds `caffeinate` on macOS, which cannot stop lid-close sleep on battery).

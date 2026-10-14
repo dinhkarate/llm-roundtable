@@ -641,6 +641,24 @@ def secret_scan(text):
     return hits
 
 
+def detach(run_dir):
+    """Continue in a grandchild in its own session; the caller gets its shell back at once.
+    Some hosts (Codex) kill every process a tool call started when that call returns, `nohup ... &` included."""
+    if not hasattr(os, "fork"):
+        raise SystemExit("--detach needs fork(); on this platform start the run in the background yourself")
+    sys.stdout.flush()
+    if os.fork():
+        os._exit(0)
+    os.setsid()
+    if os.fork():
+        os._exit(0)
+    out = os.open(str(run_dir / "runner.log"), os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.dup2(out, 1)
+    os.dup2(out, 2)
+
+
 def cmd_run(args):
     if os.environ.get("ROUNDTABLE_SEAT"):
         raise SystemExit("refusing to convene a council from inside a council seat (ROUNDTABLE_SEAT=%s)" % os.environ["ROUNDTABLE_SEAT"])
@@ -664,6 +682,9 @@ def cmd_run(args):
     # meta first, so `status` sees this run (STARTING) while seats resolve (opencode discovery can take a while)
     (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps({"title": title, "started": started, "pid": os.getpid()}))
     print(str(run_dir), flush=True)
+    if args.detach:
+        detach(run_dir)
+        (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps({"title": title, "started": started, "pid": os.getpid()}))
     (run_dir / "brief.md").write_text(encoding="utf-8", data=brief)
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, _on_signal)
@@ -993,10 +1014,15 @@ def cmd_status(args):
         print(prog.read_text(encoding="utf-8").rstrip())
     if (run_dir / "decision.md").exists():
         res = run_dir / "result.json"
-        if res.exists() and json.loads(res.read_text(encoding="utf-8")).get("workspace_changed"):
+        result = json.loads(res.read_text(encoding="utf-8")) if res.exists() else {}
+        if result.get("workspace_changed"):
             print("TAINTED (workspace changed during the council; do not act on it)")
+            print("VERDICT: NONE (workspace_changed)")
             return 4
         print("DONE")
+        t = result.get("tally") or {}
+        if t:
+            print("VERDICT: %s (%s)" % (t.get("verdict") or "NONE", t.get("decided_by")))
         return 0
     pid = json.loads((run_dir / "meta.json").read_text(encoding="utf-8")).get("pid")
     alive = False
@@ -1081,6 +1107,8 @@ def main(argv=None):
     r.add_argument("--title")
     r.add_argument("--out", help="run directory (default ~/.roundtable/runs/<time>-<slug>)")
     r.add_argument("--seed", type=int, help="seed for the anonymous label shuffle")
+    r.add_argument("--detach", action="store_true", help="print the run directory and continue in the background "
+                                                          "(own session, output in <run>/runner.log); poll with `status`")
     r.add_argument("--default", help="option to take when the council cannot decide (TIE without Fable, NO QUORUM); "
                                      "pick the safest, most reversible one. Review mode defaults to CHANGES")
     r.set_defaults(func=cmd_run)

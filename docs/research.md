@@ -93,6 +93,10 @@ CLI quirks found while building it (read these before touching an adapter):
   into "out of quota" → only the last 15 lines are matched.
 - Plan modes inject "spawn agents, ExitPlanMode" instructions into claude and end grok's headless runs
   before the ballot → neither CLI runs in plan mode; read-only comes from allowlists and sandboxes.
+- Codex kills every process a shell tool call started when the call returns, so `nohup ... &` from a Codex host
+  never finished a council (2026-10-14 host test) → `run --detach` double-forks into its own session.
+- `status` used to end at `DONE` without the verdict, so host agents re-ran `tally` to read it → `status` now
+  prints the `VERDICT:` line.
 - Codex ships 100+ `codex_apps` tools (deploy sites, share pages, Datadog) plus computer use, and claude
   may load MCP servers that publish externally → all of these are disabled for council seats.
 

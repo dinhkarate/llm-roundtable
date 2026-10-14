@@ -2,7 +2,9 @@ import json
 import os
 import subprocess
 import sys
+import signal
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -206,6 +208,43 @@ class EndToEndTest(unittest.TestCase):
         st = subprocess.run([sys.executable, str(SCRIPT), "status", str(run)], capture_output=True, text=True)
         self.assertEqual(st.returncode, 4)
         self.assertIn("TAINTED", st.stdout)
+        self.assertEqual(st.stdout.rstrip().splitlines()[-1], "VERDICT: NONE (workspace_changed)")
+
+    def test_status_prints_verdict(self):
+        seats = [{"id": "x", "adapter": "fake", "models": ["vote-A"]}, {"id": "y", "adapter": "fake", "models": ["vote-A"]}]
+        res, _ = self.run_council(seats, {"t": ["x", "y"]}, ["--rounds", "1"])
+        st = subprocess.run([sys.executable, str(SCRIPT), "status", res["_run_dir"]], capture_output=True, text=True)
+        self.assertEqual(st.returncode, 0)
+        self.assertEqual(st.stdout.rstrip().splitlines()[-2:], ["DONE", "VERDICT: A (council)"])
+
+    @unittest.skipUnless(hasattr(os, "fork"), "needs fork")
+    def test_detach_returns_at_once_and_finishes(self):
+        tmp = Path(tempfile.mkdtemp())
+        cfg = {"adapters": {"fake": {"bin": sys.executable, "argv": [str(FAKE), "{model}"], "stdin": True}},
+               "seats": [{"id": "x", "adapter": "fake", "models": ["vote-A"]}, {"id": "y", "adapter": "fake", "models": ["vote-A"]}],
+               "presets": {"t": ["x", "y"]}}
+        (tmp / "cfg.json").write_text(json.dumps(cfg))
+        (tmp / "brief.md").write_text("# Pick one\n\n## Options\n- A: first\n- B: second\n")
+        env = dict(os.environ, ROUNDTABLE_RUNS=str(tmp / "runs"))
+        env.pop("ROUNDTABLE_SEAT", None)
+        # the caller's process group is killed right after it returns, as Codex does with tool calls
+        p = subprocess.Popen([sys.executable, str(SCRIPT), "--config", str(tmp / "cfg.json"), "run", "--brief", str(tmp / "brief.md"),
+                              "--seats", "t", "--rounds", "1", "--timeout", "60", "--detach"],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, start_new_session=True)
+        out, err = p.communicate(timeout=30)
+        self.assertEqual(p.returncode, 0, err)
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        run = Path(out.strip().splitlines()[0])
+        self.assertTrue(run.is_dir())
+        deadline = time.time() + 60
+        while time.time() < deadline and not (run / "decision.md").exists():
+            time.sleep(0.5)
+        st = subprocess.run([sys.executable, str(SCRIPT), "status", str(run)], capture_output=True, text=True)
+        self.assertIn("VERDICT: A (council)", st.stdout)
+        self.assertTrue((run / "runner.log").exists())
 
     def test_subdirectory_workspace_is_watched(self):
         ws = make_repo()
