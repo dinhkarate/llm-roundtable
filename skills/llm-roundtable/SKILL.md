@@ -1,6 +1,6 @@
 ---
 name: llm-roundtable
-description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity, newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
+description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity; optionally the newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
 version: 0.2.0
 tags: [decision, review, multi-model, debate, voting, council]
 ---
@@ -9,7 +9,7 @@ tags: [decision, review, multi-model, debate, voting, council]
 
 The council stands in for the user while the user is away, so work does not stall on a question.
 You are the **moderator**, never a voter: turn the question into a brief, run `scripts/roundtable.py`,
-then act on the verdict. Each member is a separate CLI process (fresh context, read-only), even if it
+then act on the verdict. Each member is a separate CLI process (fresh context; the default seats are read-only), even if it
 is the same product you are running in.
 
 ## When
@@ -41,8 +41,8 @@ change"). It is what happens when the council cannot decide; nobody is there to 
 
 - Members cannot see this conversation. The brief must stand alone.
 - Neutral wording: do not reveal which option you or the user prefer.
-- **Privacy gate.** The brief goes to Anthropic, OpenAI, xAI, Google and an OpenCode free provider
-  (free models may train on prompts). Never include secrets (the script blocks obvious ones),
+- **Privacy gate.** The brief goes to Anthropic, OpenAI, xAI, Google, and with the opt-in OpenCode seat a free
+  provider (free models may train on prompts). Never include secrets (the script blocks obvious ones),
   customer data or employer-confidential material. For company work use `--private`
   (drops seats that may train on data) and anonymize; if it still cannot leave the machine,
   do not run a council.
@@ -62,7 +62,7 @@ python3 $S run --brief brief.md   # full council, 2 rounds
 Before a real run, `--dry-run` with the same flags checks the brief and options (unparsed `## Options`
 lines are listed under `warnings`), resolves seats and fallbacks, and prints `sitting`, `quorum_ok` and
 `bounds` (happy-path calls, max calls, max wall seconds). It creates no run directory and calls no model,
-but seat discovery for the OpenCode seat still runs and can take a few minutes. If `quorum_ok` is false,
+but seat discovery for the OpenCode seat (when you include it) still runs and can take a few minutes. If `quorum_ok` is false,
 fix the seats (or decide with the `--default` yourself) instead of starting the council.
 
 A council takes 5-20 minutes, longer than most tool timeouts. On every host, start it with `--detach`:
@@ -79,7 +79,7 @@ When it is finished, `status` ends with `DONE` then the same `VERDICT: ...` line
 (lines such as `USAGE:` (calls, tokens, wall time), `MARGIN:`, `EARLY STOP:`, `INJECTION:` and `FRAMING:`
 come before `DONE`). `status --json` prints `state`, `verdict`, `decided_by`, `actionable`, `council_verdict`,
 `narrow_margin`, `framing_concern`, `early_stop`, `injection_suspected`, `conditions`, `kill_criteria`,
-`unresolved_questions`, `unattended` and `usage` (same exit codes as plain `status`).
+`unresolved_questions`, `unattended`, `carried` and `usage` (same exit codes as plain `status`).
 Prefer it over parsing text. Runs live in
 `~/.roundtable/runs/` (set `ROUNDTABLE_RUNS` to put them elsewhere); the runner's own output is in
 `$RUN/runner.log`.
@@ -103,7 +103,8 @@ the ballots so far are tallied), `--option A='...'` instead of an Options sectio
 valid weight the council's pick is recorded but `--default` applies, as on a TIE; 0.67 rejects a 4-2
 split of six, 2/3 accepts it), `--early-stop` (opt-in: skip the cross-exam when round 1 is unanimous with
 at least 3 valid ballots from 2+ vendor CLIs; never in review mode), `--dry-run`.
-Presets: `full`, `duo`, `solo-codex`, `solo-grok`, `solo-agy` (see references/hosts.md).
+Presets: `full` (default: fable, opus, codex, grok, gemini), `full-open` (adds the free OpenCode seat, which is
+not sandboxed), `duo`, `solo-codex`, `solo-grok`, `solo-agy` (see references/hosts.md).
 
 ## 3. Act on the verdict
 
@@ -144,7 +145,7 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
 ## Rules the script enforces
 
 - Seats (default): fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`,
-  grok `grok-4.7`, gemini `gemini-3.8-flash-high` (Antigravity), opencode = newest free OpenCode
+  grok `grok-4.7`, gemini `gemini-3.8-flash-high` (Antigravity); opt-in opencode = newest free OpenCode
   model whose family differs from the others.
 - Fallback: one level down in the same family only (fable 5, opus 5, gpt-6-sol, grok-4.6,
   gemini 3.7 flash, next-newest free OpenCode model) on quota / unavailable / error / timeout.
@@ -159,11 +160,13 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
 - Round 1 also asks each seat to restate the question and name a missing option, if any. When at least
   max(2, half rounded up) of the valid seats name one, the run carries a framing concern; the vote is
   unchanged.
-- Seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
+- Default seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
   (codex, grok), agy in its own sandbox on a snapshot copy of the workspace, MCP/app tools removed,
-  unrelated credentials stripped from their environment, claude seats without the user's hooks or memory
-  (`--restricted`). Only a seat's final answer can carry its ballot. The workspace is fingerprinted after
-  every round; a change stops the council (TAINTED).
+  each seat keeps only its own CLI's credentials, claude seats without the user's hooks or memory
+  (`--restricted`, Claude Code >= 2.1.248). The opt-in opencode seat is NOT sandboxed (its background service
+  can run shell commands); it gets a snapshot copy and `--private` drops it. Only a seat's final answer can
+  carry its ballot. The workspace (tracked, untracked, gitignored files outside dependency/build dirs) is
+  fingerprinted after every round; a change stops the council (TAINTED).
 - Weight = seat weight x (0.5 + 0.5 x mean peer rating, self-ratings ignored). Highest weighted
   score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots:
   NO QUORUM. TIE or NO QUORUM falls back to `--default`, and so does a winner below `--min-margin`.

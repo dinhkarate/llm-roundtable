@@ -1,5 +1,5 @@
 {
-  "_doc": "Default council. Override or extend in ~/.config/roundtable/seats.json (same shape; adapters/presets merge by key, seats patch by id). Placeholders: {model} {prompt} {prompt_file} {out_file}. format: how to read the answer and token usage (claude-json, codex-jsonl, grok-json, opencode-jsonl; absent = plain text, no tokens).",
+  "_doc": "Default council. Override or extend in ~/.config/roundtable/seats.json (same shape; adapters/presets merge by key, seats patch by id). Placeholders: {model} {prompt} {prompt_file} {out_file}. auth_env: env var prefixes this CLI needs for its login (every other secret-looking variable is removed from its environment). requires.flags: flags its --help must list, else doctor reports it outdated. format: how to read the answer and token usage (claude-json, codex-jsonl, grok-json, opencode-jsonl; absent = plain text, no tokens).",
   "quorum": 2,
   "rounds": 2,
   "timeout": 900,
@@ -14,6 +14,8 @@
                "Bash(ls:*)", "Bash(wc:*)", "Bash(git status:*)", "Bash(git ls-files:*)"],
       "stdin": true,
       "format": "claude-json",
+      "auth_env": ["ANTHROPIC_", "CLAUDE_"],
+      "requires": {"flags": ["--restricted", "--output-format"], "note": "--restricted needs Claude Code >= 2.1.248"},
       "_note": "--restricted ignores user/project/local settings, so the user's hooks (SessionStart context, prompt hooks) and auto-memory never reach a seat. plan mode injects 'spawn agents, ExitPlanMode' instructions; dontAsk denies anything not allowlisted. Read/Grep/Glob replace cat/rg; no git diff/log (--output writes), no rg (--pre runs), no code execution. --strict-mcp-config drops MCP servers that publish externally"
     },
     "codex": {
@@ -23,18 +25,21 @@
       "stdin": true,
       "output": "out_file",
       "format": "codex-jsonl",
+      "auth_env": ["OPENAI_", "CODEX_"],
       "_note": "apps/computer_use/browser_use expose 100+ tools that can deploy, share or click; a council seat needs none of them"
     },
     "grok": {
       "bin": "grok",
       "argv": ["-m", "{model}", "--sandbox", "read-only", "--always-approve", "--output-format", "json", "--prompt-file", "{prompt_file}"],
       "format": "grok-json",
+      "auth_env": ["XAI_", "GROK_"],
       "_note": "plan mode ends headless runs with exit_plan_mode and prints only the opening line; read-only sandbox is kernel-enforced outside temp dirs"
     },
     "agy": {
       "bin": "agy",
       "argv": ["--model", "{model}", "--sandbox", "--disable-slash-commands", "-p={prompt}"],
       "isolate": true,
+      "auth_env": ["GEMINI_", "GOOGLE_", "AGY_"],
       "_note": "plain text output: no token figures (its --output-format json was not verifiable, see research.md). no --dangerously-skip-permissions: it can lift the sandbox (agy issue #36). Headless then denies tools that need a prompt (read_url); the seat continues without them. With --workspace it still reads a snapshot copy, never the real checkout"
     },
     "opencode": {
@@ -42,7 +47,9 @@
       "argv": ["run", "-m", "{model}", "--agent", "plan", "--format", "json", "{prompt}"],
       "format": "opencode-jsonl",
       "usage_argv": ["session", "export", "{session}"],
-      "_note": "`run --format json` prints no token counts; they are read back with `session export` (local, no model call)"
+      "isolate": true,
+      "auth_env": ["OPENCODE_"],
+      "_note": "NOT a sandbox: `opencode run` talks to a background service that can run shell commands anywhere (config denies are ignored). isolate gives it a snapshot copy of the workspace as its cwd, which keeps it out of the checkout only as long as it stays in its cwd. Not in the default preset; opt in with --seats full,opencode or a solo preset. `run --format json` prints no token counts; they are read back with `session export` (local, no model call)"
     }
   },
   "seats": [
@@ -58,7 +65,8 @@
     {"id": "grok-46",  "adapter": "grok",     "family": "grok-alt",    "models": ["grok-4.6", "grok-4.5"],   "weight": 1.0, "homogeneous": true}
   ],
   "presets": {
-    "full":       ["fable", "opus", "codex", "grok", "gemini", "opencode"],
+    "full":       ["fable", "opus", "codex", "grok", "gemini"],
+    "full-open":  ["fable", "opus", "codex", "grok", "gemini", "opencode"],
     "duo":        ["fable", "opus"],
     "solo-codex": ["codex", "codex-6", "opencode"],
     "solo-grok":  ["grok", "grok-46", "opencode"],

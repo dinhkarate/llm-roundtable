@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>A multi-LLM council for autonomous coding agents.</b><br>
-  Claude Fable, Claude Opus, GPT (Codex), Grok, Gemini and a free OpenCode model gather evidence,
+  Claude Fable, Claude Opus, GPT (Codex), Grok and Gemini (plus an opt-in free OpenCode model) gather evidence,
   cross-examine each other anonymously and cast weighted votes, so your agent keeps working when you are not there to answer.
 </p>
 
@@ -37,14 +37,14 @@
 **llm-roundtable** is an [Agent Skill](https://github.com/vercel-labs/skills) plus a single Python script.
 When an autonomous agent (an overnight `/loop`, a background worker, a CI bot) reaches a point where it would
 stop and ask you *"A or B?"*, *"is this plan OK?"* or *"can I merge this diff?"*, it convenes a council of
-models from **five different vendors** instead. Each member runs as its own read-only CLI process, cites
+models from **four vendors** instead (a free OpenCode model can join as a fifth). Each member runs as its own CLI process, cites
 evidence, reviews the other members' answers without knowing who wrote them, and votes. The verdict is
 computed from the ballots, not written by a "chairman" model, and every run leaves a `decision.md` you can audit later.
 
 - **Uses the subscriptions you already have.** It drives the `claude`, `codex`, `grok`, `agy` (Antigravity) and `opencode` CLIs. No API keys, no proxy, no MCP server.
 - **Evidence or it does not count.** A ballot needs at least one sourced `FACT` or `INFERENCE`. Peers rate each other's evidence 0-2, and those ratings scale the vote weight.
 - **Anonymous cross-examination.** In round 2 members see every position as M1..Mn, shuffled, in a fresh session, so no member can recognise its own earlier answer or defer to a famous brand.
-- **Safe by construction.** Seats are read-only (kernel sandboxes or tool allowlists), outward-publishing tools are removed, credentials are stripped from their environment, and the workspace is fingerprinted after every round.
+- **Locked down by default.** The default seats are read-only (kernel sandboxes, a tool allowlist, or a snapshot copy), outward-publishing tools are removed, each seat gets only its own CLI's credentials, and the workspace is fingerprinted after every round. The opt-in OpenCode seat is not sandboxed; see [Safety](#safety-and-privacy).
 - **Hard to steer.** Files and other members' answers are treated as data: cross-exam positions sit inside per-prompt nonce fences, seats report injection attempts, and a `file:line` citation that does not exist in the repo stops counting as a fact.
 - **Measured.** Every run reports its CLI calls, wall time and the tokens each CLI used, in `decision.md`, `result.json` and `status --json`.
 - **Never stalls.** Each seat falls back exactly one model level, then is marked UNATTENDED. A tie goes to the Fable seat, and an undecided council falls back to the safe `--default` you chose.
@@ -136,7 +136,7 @@ Sample briefs to copy (a technology choice, a migration, a dependency upgrade, s
 flowchart TD
     A["Agent hits a decision while you are away"] --> B["Writes brief.md: question, context, 2-5 options"]
     B --> R1(["Round 1: blind, independent answers"])
-    R1 --> S1["Fable"] & S2["Opus"] & S3["GPT via Codex"] & S4["Grok"] & S5["Gemini via Antigravity"] & S6["OpenCode free model"]
+    R1 --> S1["Fable"] & S2["Opus"] & S3["GPT via Codex"] & S4["Grok"] & S5["Gemini via Antigravity"] & S6["OpenCode free model (opt-in)"]
     S1 & S2 & S3 & S4 & S5 & S6 --> R2(["Round 2: anonymous cross-exam, positions shown as M1..M6, shuffled"])
     R2 --> E["Peers rate evidence 0-2, rebut, re-vote"]
     E --> G["Weighted tally: seat weight x (0.5 + 0.5 x peer rating)"]
@@ -192,12 +192,12 @@ Details and sources: [`docs/research.md`](docs/research.md).
 | | llm-roundtable | [karpathy/llm-council](https://github.com/karpathy/llm-council) | [claude-skills-llm-council](https://github.com/aiwithremy/claude-skills-llm-council) | [council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) | [Zen / PAL MCP](https://github.com/BeehiveInnovations/zen-mcp-server) `consensus` |
 |---|---|---|---|---|---|
 | Model access | your CLI subscriptions | OpenRouter API key | Claude only (5 persona subagents) | Claude subagents + codex / gemini / ollama / cursor-agent CLIs, 18 personas | provider API keys |
-| Vendors per council | 5 (Anthropic, OpenAI, xAI, Google, OpenCode free) | any via OpenRouter | 1 | Claude + Codex/Gemini/Ollama | any via API |
+| Vendors per council | 4 by default (Anthropic, OpenAI, xAI, Google), 5 with the opt-in OpenCode free seat | any via OpenRouter | 1 | Claude + Codex/Gemini/Ollama | any via API |
 | Decision | weighted vote, evidence-rated by peers | chairman model synthesises | chairman synthesises | confidence-weighted tally (2/3 to pass), then a chairman writes the verdict | conversation, no vote rule |
 | Anonymous peer review | yes, fresh session per round | yes (Response A/B) | yes | yes (relabelled by the coordinator) | no |
 | Evidence required to vote | yes, sourced FACT/INFERENCE | no | no | labels, not enforced | no |
 | Fallback when a model is down | one level, then UNATTENDED, never blocks | no | n/a | falls back to Claude | no |
-| Read-only, sandboxed members | yes, plus workspace tamper check | n/a (web app) | no | no | n/a |
+| Read-only, sandboxed members | yes for the default seats, plus a workspace tamper check (OpenCode seat: opt-in, not sandboxed) | n/a (web app) | no | no | n/a |
 | Undecided council | falls back to your safe `--default` | n/a | n/a | goes back to the user | n/a |
 | Runs from | any agent with a shell | browser | Claude Code, Claude Cowork | Claude Code, Codex, Gemini CLI, OpenCode | hosts with MCP |
 
@@ -210,7 +210,7 @@ Details and sources: [`docs/research.md`](docs/research.md).
 | **codex** `gpt-6.1-sol` → `gpt-6-sol` | `codex` | `codex login` (ChatGPT plan) |
 | **grok** `grok-4.7` → `grok-4.6` | `grok` | `grok login` |
 | **gemini** `gemini-3.8-flash-high` → `gemini-3.7-flash-high` | `agy` (Antigravity) | run `agy` once |
-| **opencode** newest free model from a family not already seated | `opencode` | none |
+| **opencode** (opt-in: `--seats full-open` or a solo preset) newest free model from a family not already seated | `opencode` | none |
 
 Missing CLIs are not errors; those seats are UNATTENDED and the rest still vote. Presets for one-tool setups:
 `duo` (Claude only), `solo-codex`, `solo-grok`, `solo-agy`. Add any other CLI (Qwen, Cursor agent, Aider...)
@@ -220,9 +220,10 @@ with a few lines of JSON in `~/.config/roundtable/seats.json`. No code changes: 
 ## Safety and privacy
 
 - The brief goes to several vendors. The script refuses briefs that look like they contain secrets, and `--private` drops seats whose provider may train on prompts (OpenCode free models).
-- Members are read-only: `claude` with a tool allowlist, no MCP servers and none of your hooks or memory (`--restricted`), `codex` and `grok` in kernel read-only sandboxes, `agy` sandboxed on a snapshot copy of the workspace.
-- Publishing tools (Codex apps, computer use, browser use, MCP servers) are disabled. Unrelated credentials (`GH_TOKEN`, cloud keys...) are stripped from each seat's environment.
-- With `--workspace`, the repo is fingerprinted after every round. Any change stops the council, marks the run TAINTED and gives `VERDICT: NONE`.
+- Default members are read-only: `claude` with a tool allowlist, no MCP servers and none of your hooks or memory (`--restricted`, needs Claude Code 2.1.248 or later; `doctor` flags an older one), `codex` and `grok` in kernel read-only sandboxes, `agy` sandboxed on a snapshot copy of the workspace.
+- The **OpenCode seat is not a sandbox** and is off by default: `opencode run` hands work to a background service that can run shell commands anywhere. When you opt in (`--seats full-open`, `solo-*` presets) it works in a snapshot copy of the workspace, but treat it as able to read the machine; `--private` drops it.
+- Publishing tools (Codex apps, computer use, browser use, MCP servers) are disabled. Every secret-looking variable (`GH_TOKEN`, cloud keys, other vendors' API keys) is removed from a seat's environment except its own CLI's login variables (`auth_env` in seats.json).
+- With `--workspace`, the repo is fingerprinted after every round: HEAD, status, diff, untracked files and gitignored files such as `.env`. Dependency and build dirs (`node_modules`, `target`, `.venv`, caches) are not watched. A change stops the council, marks the run TAINTED and gives `VERDICT: NONE`.
 - Text in files, quoted documents and other members' answers is data, never instructions. Steering attempts are reported (`INJECTION:`), never obeyed, and block `--early-stop`.
 - A seat cannot convene a nested council (`ROUNDTABLE_SEAT` guard).
 - The council picks between options the agent was already allowed to take. It never grants permission to push, deploy, delete data or spend money.
@@ -239,7 +240,7 @@ No. It calls the official CLIs you are already logged into (Claude Code, Codex, 
 OpenCode), so usage counts against your existing subscriptions. OpenCode free models need no login at all.
 
 **How long does a council take and what does it cost?**
-About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. `--rounds 1` halves it, `--seats duo` uses only two Claude models, `--early-stop` skips round 2 when round 1 is unanimous. `run --dry-run` prints the upper bounds for your setup, `--deadline` caps the whole run, and every `decision.md` ends with the calls, wall time and tokens per seat it actually took.
+About 10 model calls (5 seats × 2 rounds), typically 5-20 minutes; a measured two-round council used 684k tokens, mostly cached input. `--rounds 1` halves it, `--seats duo` uses only two Claude models, `--early-stop` skips round 2 when round 1 is unanimous. `run --dry-run` prints the upper bounds for your setup, `--deadline` caps the whole run, and every `decision.md` ends with the calls, wall time and tokens per seat it actually took.
 
 **Can I use it with only Claude Code (or only Codex)?**
 Yes. Use the `duo`, `solo-codex`, `solo-grok` or `solo-agy` preset. Adding `opencode` (free, no login) is the
@@ -251,7 +252,7 @@ APPROVE / CHANGES / REJECT. The project reviews its own changes this way; see th
 [`docs/research.md`](docs/research.md#4-field-notes).
 
 **Will it change my code?**
-No. Members are read-only and the workspace is checked before and after. The host agent acts on the verdict, within the permissions you already gave it.
+Not with the default seats: they are read-only, and the workspace is checked after every round. The opt-in OpenCode seat is not sandboxed (see Safety). The host agent acts on the verdict, within the permissions you already gave it.
 
 **What happens when a model is rate-limited?**
 The seat retries once on the model one level down in the same family, then is marked UNATTENDED. The council continues as long as at least two valid ballots remain.

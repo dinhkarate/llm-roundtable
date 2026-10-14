@@ -98,7 +98,8 @@ Ghi chú CLI rút ra khi thử:
 - "You've hit your session limit" của claude là giới hạn cả tài khoản: fallback sang `claude-fable-5` cùng tài
   khoản phí 10 lần gọi trong đợt hội đồng v0.2 → giới hạn cấp tài khoản thì bỏ qua fallback.
 - agy trả `PERMISSION_DENIED (code 403): This service has been disabled in this account for violation of Terms
-  of Service` (2026-10-14, `agy models`) → xếp vào giới hạn cấp tài khoản; không xem được định dạng JSON của agy
+  of Service` (2026-10-14, `agy models`) → xếp vào giới hạn cấp tài khoản (hôm sau gọi model thì nhận 429 hết quota chứ không phải 403, nên có thể
+  chỉ phần liệt kê model bị chặn); không xem được định dạng JSON của agy
   nên adapter agy giữ dạng text, không có số token.
 - Số token lấy từ đầu ra JSON của từng CLI (`claude --output-format json`, `codex exec --json`,
   `grok --output-format json`, `opencode run --format json` + `opencode session export <id>`). Một hội đồng thử
@@ -127,7 +128,7 @@ Ngoài lỗi code, chính lúc chạy thật mới lộ ra: codex mặc định 
 - Bật early stop mặc định hay không: `ledger` trên 15 run của tác giả (2026-10-15): 12 run có vòng 2, 5 run vòng 1
   nhất trí, và chưa run nào trong 5 run đó đổi phiếu ở vòng 2. Còn quá ít để đổi mặc định.
 - Thử lại/tiếp tục cho ghế UNATTENDED (hiện một lần hết quota thoáng qua là mất ghế cả lần chạy).
-- Ghế Gemini: tài khoản agy của tác giả bị khoá (403) nên chưa kiểm chứng được fallback thay thế.
+- Ghế Gemini: `agy models` trả 403 và gemini 3.8 hết quota trên tài khoản tác giả, nên chưa kiểm chứng được fallback thay thế.
 
 ## Nguồn
 

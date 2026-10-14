@@ -111,8 +111,9 @@ CLI quirks found while building it (read these before touching an adapter):
   wasted 10 calls in the v0.2 councils → account-level patterns skip the fallback.
 - agy answered `PERMISSION_DENIED (code 403): This service has been disabled in this account for violation of
   Terms of Service` on the author's machine (2026-10-14, `agy models`), after the gemini seat had been UNATTENDED
-  (quota) in every v0.2 council → treated as account-level; agy's JSON output format could not be inspected, so
-  the agy adapter stays plain text and reports no tokens.
+  (quota) in every v0.2 council → treated as account-level. Model calls the next day returned 429 quota
+  (`Resets in 104h`) rather than 403, so the block may cover the model listing only. agy's JSON output format
+  could not be inspected, so the agy adapter stays plain text and reports no tokens.
 - Token figures come from each CLI's JSON output (`claude --output-format json`, `codex exec --json`,
   `grok --output-format json`, `opencode run --format json` + `opencode session export <id>`; opencode's run
   output itself carries none). The input side dominates: on a one-round smoke council about a formatter's line
@@ -142,7 +143,8 @@ README and the GitHub Actions docs as evidence.
 - Early stop as a default: `ledger` on the author's 15 runs (2026-10-15): of 12 runs that cross-examined, 5 had a
   unanimous round 1 and none of those changed a vote in round 2. Too few runs to flip the default yet.
 - Retry or resume for UNATTENDED seats (a quota blip currently loses the seat for the run).
-- The Gemini seat: agy is blocked on the author's account (403), so a replacement fallback cannot be verified here.
+- The Gemini seat: on the author's account `agy models` answers 403 and gemini 3.8 is out of quota, so a
+  replacement fallback cannot be verified here.
 
 ## Sources
 

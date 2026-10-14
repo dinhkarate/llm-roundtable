@@ -59,6 +59,9 @@ UNAVAILABLE_RE = re.compile(
     r"not available|couldn't set model|unknown model id",
     re.I,
 )
+# the CLI itself rejects a flag in the adapter's argv (too old for it): every model on that CLI fails the same way
+OUTDATED_CLI_RE = re.compile(r"unknown option|unrecognized (option|argument)|unexpected argument|no such option|"
+                             r"flag provided but not defined", re.I)
 # limits of the whole account, not of one model: falling back to another model on the same account cannot help
 ACCOUNT_RE = re.compile(
     r"(session|weekly) limit|hit your (session|weekly)|disabled in this account|violation of terms of service|"
@@ -270,14 +273,15 @@ def log(run_dir, msg):
 
 
 SECRET_ENV_RE = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|PRIVATE|CREDENTIAL|AUTH|COOKIE|SESSION", re.I)
-SEAT_AUTH_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XAI_", "GROK_", "GEMINI_", "GOOGLE_", "OPENCODE_", "AGY_")
 
 
-def seat_env(seat_id, cwd=None):
-    """The parent environment minus credentials the seat's own CLI does not need (GH_TOKEN, cloud keys, ...).
+def seat_env(seat_id, cwd=None, auth=()):
+    """The parent environment minus every secret-looking variable (GH_TOKEN, cloud keys, other vendors' API keys)
+    except those whose prefix the seat's own adapter lists in `auth_env`: a seat gets its own CLI's credentials only.
     PWD follows the seat's cwd: opencode takes its project directory from $PWD, not from the real cwd."""
+    auth = tuple(auth or ())
     env = {k: v for k, v in os.environ.items()
-           if (not SECRET_ENV_RE.search(k) or k.startswith(SEAT_AUTH_PREFIXES)) and k != "OLDPWD"}
+           if (not SECRET_ENV_RE.search(k) or (auth and k.startswith(auth))) and k != "OLDPWD"}
     env.update(ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
     if cwd is not None:
         env["PWD"] = str(cwd)
@@ -387,11 +391,23 @@ def _opencode_tokens(t, cost=None):
 def session_tokens(exe, argv, session, cwd, env, seat_dir):
     """Tokens of a finished session read back from the CLI's own store (opencode: `session export <id>`).
     Local and model-free; any failure just means no token figures for this call."""
+    budget = _budget(60)
+    if budget <= 0 or _stopping.is_set():
+        return None
     try:
-        p = subprocess.run([exe] + [a.replace("{session}", session) for a in argv], cwd=str(cwd), env=env,
-                           stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                           timeout=60)
-        d = json.loads(p.stdout)
+        kw = {"start_new_session": True} if os.name != "nt" else {}
+        p = subprocess.Popen([exe] + [a.replace("{session}", session) for a in argv], cwd=str(cwd), env=env,
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                             encoding="utf-8", errors="replace", **kw)
+        _live.add(p)  # reaped on SIGINT/SIGTERM/exit like a seat
+        try:
+            out, _ = p.communicate(timeout=budget)
+        except subprocess.TimeoutExpired:
+            _kill_tree(p)
+            return None
+        finally:
+            _live.discard(p)
+        d = json.loads(out)
         info = d.get("info") or {}
         return _opencode_tokens(info["tokens"], info.get("cost")) if isinstance(info.get("tokens"), dict) else None
     except Exception:  # noqa: BLE001
@@ -422,7 +438,7 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
         return {"status": "missing", "detail": "%s not on PATH" % adapter["bin"], "text": ""}
     values = {"model": model, "prompt": prompt, "prompt_file": str(prompt_file), "out_file": str(out_file)}
     argv = [exe] + [fill(a, values) for a in adapter["argv"]]
-    env = seat_env(seat_id, cwd)
+    env = seat_env(seat_id, cwd, adapter.get("auth_env"))
     start, mono = time.time(), time.monotonic()
     stdin = open(prompt_file, encoding="utf-8") if adapter.get("stdin") else subprocess.DEVNULL
     kw = {"start_new_session": True} if os.name != "nt" else {}
@@ -590,6 +606,9 @@ def classify(res, option_ids):
     res["detail"] = (lines[-1] if lines else "no output")[:300]
     if res["status"] in ("quota", "unavailable", "error") and ACCOUNT_RE.search(tail):
         res["account_limit"] = True  # _sit does not walk to a fallback model on the same account
+    if res["status"] in ("unavailable", "error") and OUTDATED_CLI_RE.search(tail):
+        res["cli_outdated"] = True
+        res["detail"] = "CLI rejected a flag (too old? see hosts.md): " + res["detail"]
     return res
 
 
@@ -655,6 +674,10 @@ def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, sta
         if res.get("account_limit") and res["status"] in FALLBACK_STATUSES:
             log(run_dir, "r%d %-10s account-level limit: no fallback on the same account" % (rnd, seat["id"]))
             stop_note = "account-level limit, fallback skipped"
+            break
+        if res.get("cli_outdated"):
+            log(run_dir, "r%d %-10s the CLI rejected a flag: no fallback (same CLI); update it" % (rnd, seat["id"]))
+            stop_note = "CLI too old for this adapter, fallback skipped"
             break
         if res["status"] in ("missing", "stopped") or _stopping.is_set():
             break
@@ -1048,6 +1071,10 @@ def cmd_run(args):
     if plan["deadline"]:
         _deadline_at = t_run + plan["deadline"]
     run_dir = Path(args.out).resolve() if args.out else RUNS_DIR / ("%s-%s" % (dt.datetime.now().strftime("%Y%m%d-%H%M%S"), slugify(title)))
+    used = [n for n in ("meta.json", "decision.md", "result.json") if (run_dir / n).exists()]
+    if used:
+        # an old decision.md would make `status` report the previous verdict as DONE while this run is going
+        raise SystemExit("%s already holds a run (%s); pass a new --out" % (run_dir, ", ".join(used)))
     run_dir.mkdir(parents=True, exist_ok=True)
     started = dt.datetime.now().isoformat(timespec="seconds")
     # meta first, so `status` sees this run (STARTING) while seats resolve (opencode discovery can take a while)
@@ -1186,9 +1213,13 @@ def cmd_run(args):
             if res["status"] == "ok" or (res["status"] == "no_evidence" and st.get("status") != "ok"):
                 st["status"], st["ballot"] = res["status"], res["ballot"]
                 st["model"], st["level"] = res.get("model", st.get("model")), res.get("level", st["level"])
+                st.pop("carried", None)  # this round's ballot replaced the carried one
                 last_ratings[sid] = res["ballot"].get("ratings", {})
             else:
                 st["carried"] = "r%d %s; kept previous ballot" % (rnd, res["status"])
+                # the chain only moves down: a later round starts where this one ended (keeps dry-run bounds true)
+                tried = [a.get("level") or 0 for a in res.get("attempts") or [] if a.get("secs") is not None]
+                st["level"] = max([st["level"]] + tried)
         tampered("round %d" % rnd)
 
     # peer evidence ratings from the last cross-exam round, self-ratings ignored
@@ -1232,7 +1263,8 @@ def git_toplevel(ws):
 
 def workspace_fingerprint(ws):
     """Detect a seat that broke the read-only rule. Git checkout (also from a subdirectory): HEAD + status +
-    tracked diff + hashes of untracked files. Otherwise: path/size/mtime of every file (caches skipped)."""
+    tracked diff + hashes of untracked files + path/size/mtime of gitignored files outside SKIP_DIRS (up to 20k).
+    Otherwise: path/size/mtime of every file outside SKIP_DIRS. Writes inside SKIP_DIRS are not detected."""
     if not ws:
         return None
     top = git_toplevel(ws)
@@ -1245,7 +1277,8 @@ def workspace_fingerprint(ws):
             hashes = subprocess.run(["git", "-C", str(top), "hash-object", "--stdin-paths"], input="\n".join(untracked),
                                     capture_output=True, text=True, encoding="utf-8", errors="replace",
                                     timeout=120).stdout if untracked else ""
-            return "\0".join([git("rev-parse", "HEAD"), git("status", "--porcelain", "-uall"), git("diff", "HEAD"), hashes])
+            return "\0".join([git("rev-parse", "HEAD"), git("status", "--porcelain", "-uall"), git("diff", "HEAD"), hashes,
+                               ignored_stats(top, git("ls-files", "-o", "-i", "--exclude-standard", "--directory", "-z"))])
         except (subprocess.SubprocessError, OSError):
             return None
     rows = []
@@ -1261,6 +1294,30 @@ def workspace_fingerprint(ws):
             if len(rows) > 50000:
                 return None
     return "\n".join(sorted(rows))
+
+
+def ignored_stats(top, listing, limit=20000):
+    """path/size/mtime of gitignored files (e.g. .env), so a seat writing one taints the run too. Ignored dirs named in
+    SKIP_DIRS (node_modules, build output, caches) are not walked; past `limit` files the rest is not covered."""
+    rows = []
+    for entry in sorted(e for e in listing.split("\0") if e):
+        paths = [entry]
+        if entry.endswith("/"):
+            if os.path.basename(entry.rstrip("/")) in SKIP_DIRS:
+                continue
+            paths = []
+            for root, dirs, files in os.walk(os.path.join(str(top), entry)):
+                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+                paths += [os.path.relpath(os.path.join(root, f), str(top)) for f in sorted(files)]
+        for rel in paths:
+            try:
+                st = os.lstat(os.path.join(str(top), rel))
+            except OSError:
+                continue
+            rows.append("%s %d %d" % (rel, st.st_size, st.st_mtime_ns))
+            if len(rows) >= limit:
+                return "\n".join(rows + ["(ignored files past %d not covered)" % limit])
+    return "\n".join(rows)
 
 
 def snapshot_workspace(ws, dest, limit=300 * 1024 * 1024):
@@ -1286,20 +1343,28 @@ def snapshot_workspace(ws, dest, limit=300 * 1024 * 1024):
 
 
 URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.I)
-FILE_LINE_RE = re.compile(r"(?<![\w/.@-])((?:[\w.@-]+/)*[\w@-][\w.@-]*\.[A-Za-z][A-Za-z0-9]{0,7}):(\d+)(?:-(\d+))?")
+FILE_LINE_RE = re.compile(r"(?<![\w/.@:-])((?:/|\./)?(?:[\w.@-]+/)*[\w@-][\w.@-]*\.([A-Za-z][A-Za-z0-9]{0,7})):(\d+)(?:-(\d+))?")
+# a bare name (no "/") counts as a file only with one of these extensions, so host:port ("api.example.com:443") is not one
+FILE_EXTS = set("""py pyi md txt rst json jsonl yaml yml toml ini cfg conf lock js mjs cjs ts tsx jsx vue svelte css scss
+html htm xml sh bash zsh fish ps1 bat go rs java kt kts swift rb php c h cc cpp hpp cs m mm scala clj ex exs erl hs lua
+pl r sql graphql proto gradle tf hcl dockerfile mk cmake env csv tsv ipynb dart zig nim""".split())
 
 
 class SourceIndex:
-    """Files under the workspace, to check `file:line` citations mechanically. Not a judge of content: it only
-    asks whether the cited file exists (by path or path suffix) and has that many lines."""
+    """Checks `file:line` citations against the workspace mechanically. Not a judge of content: it only asks whether
+    the cited file exists in the workspace and has the cited lines.
+    - A path with a directory ("pkg/mod.py:3") must be the workspace path, or its tail ("mod.py" under any "pkg/");
+      an absolute path must lie inside the workspace or end with a path of it that has a directory part.
+    - A bare name ("mod.py:3") matches any file of that name.
+    - Files inside skipped dirs (node_modules, target, .venv...) are not indexed but are looked up on disk."""
 
     def __init__(self, ws, limit=50000):
-        self.ws, self.paths, self.by_name, self.lines = Path(ws), set(), {}, {}
+        self.ws, self.paths, self.by_name, self.lines = Path(ws).resolve(), set(), {}, {}
         n = 0
-        for root, dirs, files in os.walk(str(ws)):
+        for root, dirs, files in os.walk(str(self.ws)):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for f in files:
-                rel = os.path.relpath(os.path.join(root, f), str(ws)).replace(os.sep, "/")
+                rel = os.path.relpath(os.path.join(root, f), str(self.ws)).replace(os.sep, "/")
                 self.paths.add(rel)
                 self.by_name.setdefault(f, []).append(rel)
                 n += 1
@@ -1307,14 +1372,37 @@ class SourceIndex:
                     self.paths = None  # too big to index: check nothing
                     return
 
+    def _on_disk(self, rel):
+        """A workspace-relative path that exists as a file, including inside skipped dirs; never outside the workspace."""
+        try:
+            p = (self.ws / rel).resolve()
+            p.relative_to(self.ws)
+        except (ValueError, OSError):
+            return None
+        return p.relative_to(self.ws).as_posix() if p.is_file() else None
+
     def find(self, ref):
         ref = ref.replace("\\", "/")
         parts = [p for p in ref.split("/") if p not in ("", ".")]
-        same_name = self.by_name.get(parts[-1]) if parts else None
-        for i in range(len(parts)):  # longest suffix first: /abs/.../repo/a/b.py -> a/b.py -> b.py (lenient on purpose)
-            cand = "/".join(parts[i:])
-            for p in same_name or []:
-                if p == cand or p.endswith("/" + cand):
+        if not parts:
+            return None
+        if ref.startswith("/"):
+            try:  # inside the workspace: exact
+                return self._on_disk(Path(ref).resolve().relative_to(self.ws).as_posix())
+            except (ValueError, OSError):
+                pass
+            tails = ["/".join(parts[i:]) for i in range(len(parts) - 1)]  # elsewhere: tails with a directory part
+        else:
+            hit = self._on_disk("/".join(parts))
+            if hit:
+                return hit
+            tails = ["/".join(parts)]
+        same_name = self.by_name.get(parts[-1]) or []
+        for tail in tails:
+            if len(parts) == 1 and not ref.startswith("/"):
+                return same_name[0] if same_name else None  # bare name: any file of that name
+            for p in same_name:
+                if p == tail or p.endswith("/" + tail):
                     return p
         return None
 
@@ -1328,22 +1416,27 @@ class SourceIndex:
         return self.lines[rel]
 
     def unverified(self, source):
-        """Why a source does not check out, or None. Only when EVERY file:line it cites is missing or out of
-        range; sources without a file:line (URLs, commands, docs) are never judged."""
+        """Why a source does not check out, or None. Only when EVERY file:line it cites is missing, malformed or past
+        the end of its file; sources without a file:line (URLs, commands, docs) are never judged."""
         if self.paths is None:
             return None
-        refs = FILE_LINE_RE.findall(URL_RE.sub(" ", source or ""))
+        refs = [r for r in FILE_LINE_RE.findall(URL_RE.sub(" ", source or ""))
+                if "/" in r[0] or r[1].lower() in FILE_EXTS]
         if not refs:
             return None
         bad = []
-        for path, start, _end in refs:
+        for path, _ext, start, end in refs:
+            first, last = int(start), int(end) if end else int(start)
+            if first < 1 or last < first:
+                bad.append("%s:%s%s is not a line range" % (path, start, "-" + end if end else ""))
+                continue
             rel = self.find(path)
             if rel is None:
                 bad.append("%s not in the workspace" % path)
                 continue
             n = self.n_lines(rel)
-            if n is not None and int(start) > max(n, 1):
-                bad.append("%s has %d lines, cited line %s" % (rel, n, start))
+            if n is not None and last > max(n, 1):
+                bad.append("%s has %d lines, cited line %d" % (rel, n, last))
                 continue
             return None
         return "; ".join(bad)
@@ -1984,6 +2077,28 @@ def cmd_ledger(args):
     return 0
 
 
+_help_cache = {}
+
+
+def missing_flags(adapter):
+    """Flags an adapter needs (`requires.flags`) that its CLI's help text does not mention: the CLI is too old."""
+    req = adapter.get("requires") or {}
+    flags = req.get("flags") or []
+    exe = shutil.which(adapter.get("bin", ""))
+    if not flags or not exe:
+        return []
+    key = (exe, tuple(req.get("help_argv", ["--help"])))
+    if key not in _help_cache:
+        try:
+            p = subprocess.run([exe] + list(key[1]), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=30, stdin=subprocess.DEVNULL)
+            _help_cache[key] = (p.stdout or "") + (p.stderr or "")
+        except (subprocess.SubprocessError, OSError):
+            _help_cache[key] = None
+    text = _help_cache[key]
+    return [] if text is None else [f for f in flags if f not in text]
+
+
 def cmd_doctor(args):
     cfg = load_config(args.config)
     seats, skipped = resolve_seats(cfg, (args.seats or "full").split(","), private=args.private)
@@ -1994,6 +2109,11 @@ def cmd_doctor(args):
         adapter = cfg["adapters"][seat["adapter"]]
         if not shutil.which(adapter["bin"]):
             return seat["id"], i, model, "missing", "%s not on PATH" % adapter["bin"]
+        lacking = missing_flags(adapter)
+        if lacking:
+            return seat["id"], i, model, "outdated", "`%s %s` lists no %s%s" % (
+                adapter["bin"], " ".join(adapter["requires"].get("help_argv", ["--help"])), ", ".join(lacking),
+                " (%s)" % adapter["requires"]["note"] if adapter["requires"].get("note") else "")
         if not args.probe:
             return seat["id"], i, model, "found", ""
         d = probe_dir / seat["id"] / str(i)

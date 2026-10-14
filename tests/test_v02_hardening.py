@@ -115,13 +115,22 @@ class SourceIndexTest(unittest.TestCase):
     def test_found(self):
         for src in ("pkg/sub/mod.py:2", "sub/mod.py:3", "mod.py:1-3", "./pkg/sub/mod.py:1",
                     "%s/pkg/sub/mod.py:2" % self.ws, "/elsewhere/checkout/pkg/sub/mod.py:2",
-                    "README.md:1 and ghost.py:9", "https://example.com/a.py:12 (quoted)", "git log -1", "bench result"):
+                    "node_modules/dep.js:1",  # skipped dirs are not indexed but exist on disk
+                    "README.md:1 and ghost.py:9", "https://example.com/a.py:12 (quoted)", "git log -1", "bench result",
+                    "api.example.com:443", "localhost:8080"):  # host:port is not a file:line
             self.assertIsNone(self.ix.unverified(src), src)
 
-    def test_missing_or_out_of_range(self):
+    def test_missing_malformed_or_out_of_range(self):
         self.assertIn("ghost.py not in the workspace", self.ix.unverified("ghost.py:3"))
         self.assertIn("has 3 lines, cited line 40", self.ix.unverified("pkg/sub/mod.py:40"))
-        self.assertIn("not in the workspace", self.ix.unverified("node_modules/dep.js:1"))  # skipped dirs are not indexed
+        self.assertIn("has 3 lines, cited line 9", self.ix.unverified("pkg/sub/mod.py:2-9"))  # the range end counts
+        self.assertIn("is not a line range", self.ix.unverified("pkg/sub/mod.py:0"))
+        self.assertIn("is not a line range", self.ix.unverified("pkg/sub/mod.py:3-2"))
+        self.assertIn("not in the workspace", self.ix.unverified("node_modules/ghost.js:1"))
+        # a path with a directory must match that directory, not just the file name
+        self.assertIn("other/mod.py not in the workspace", self.ix.unverified("other/mod.py:2"))
+        self.assertIn("not in the workspace", self.ix.unverified("/elsewhere/mod.py:2"))
+        self.assertIn("not in the workspace", self.ix.unverified("../outside.py:1"))
 
     def test_vet_downgrades_and_can_void_a_ballot(self):
         res = rt.classify({"rc": 0, "noise": "", "text": json.dumps({"vote": "A", "evidence": [
@@ -321,6 +330,94 @@ class LedgerEndToEndTest(test_v02.E2EBase):
         self.assertEqual((sh["cross_examined_runs"], sh["r1_unanimous"], sh["unanimous_then_changed"]), (1, 1, 1))
 
 
+class ReviewFixesTest(unittest.TestCase):
+    """Regressions for the v0.2.0 release review (council CHANGES, 2026-10-15)."""
+
+    def test_each_seat_gets_only_its_own_cli_credentials(self):
+        import os
+        cfg = rt.load_config()
+        os.environ.update(ANTHROPIC_API_KEY="a", OPENAI_API_KEY="o", XAI_API_KEY="x", OPENCODE_API_KEY="c")
+        try:
+            oc = rt.seat_env("opencode", auth=cfg["adapters"]["opencode"]["auth_env"])
+            cl = rt.seat_env("fable", auth=cfg["adapters"]["claude"]["auth_env"])
+            self.assertEqual([k for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "OPENCODE_API_KEY") if k in oc],
+                             ["OPENCODE_API_KEY"])
+            self.assertEqual([k for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY") if k in cl], ["ANTHROPIC_API_KEY"])
+            self.assertNotIn("ANTHROPIC_API_KEY", rt.seat_env("custom"))  # an adapter without auth_env gets no secrets
+        finally:
+            for k in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "XAI_API_KEY", "OPENCODE_API_KEY"):
+                os.environ.pop(k, None)
+
+    def test_default_preset_and_opencode_adapter(self):
+        cfg = rt.load_config()
+        self.assertNotIn("opencode", cfg["presets"]["full"])
+        self.assertIn("opencode", cfg["presets"]["full-open"])
+        self.assertTrue(cfg["adapters"]["opencode"].get("isolate"))
+        for name, a in cfg["adapters"].items():
+            self.assertTrue(a.get("auth_env"), name)
+
+    def test_outdated_cli_is_named_and_skips_the_fallback(self):
+        res = rt.classify({"rc": 1, "text": "", "noise": "error: unknown option '--restricted'"}, ["A"])
+        self.assertTrue(res.get("cli_outdated"))
+        self.assertTrue(res["detail"].startswith("CLI rejected a flag"))
+
+    def test_missing_flags_reads_the_help_text(self):
+        a = {"bin": sys.executable, "requires": {"flags": ["--version", "--no-such-flag-xyz"], "help_argv": ["--help"]}}
+        self.assertEqual(rt.missing_flags(a), ["--no-such-flag-xyz"])
+        self.assertEqual(rt.missing_flags({"bin": sys.executable}), [])
+
+    def test_ignored_files_are_fingerprinted_but_skip_dirs_are_not(self):
+        ws = make_repo()
+        (ws / ".gitignore").write_text(".env\nnode_modules/\nlogs/\n")
+        (ws / ".env").write_text("A=1\n")
+        (ws / "node_modules").mkdir()
+        (ws / "logs").mkdir()
+        fp = rt.workspace_fingerprint(ws)
+        (ws / "node_modules" / "x.js").write_text("x")
+        self.assertEqual(rt.workspace_fingerprint(ws), fp)  # SKIP_DIRS: documented as not covered
+        (ws / ".env").write_text("A=2, now longer\n")
+        fp2 = rt.workspace_fingerprint(ws)
+        self.assertNotEqual(fp2, fp)
+        (ws / "logs" / "new.txt").write_text("x")
+        self.assertNotEqual(rt.workspace_fingerprint(ws), fp2)
+
+    def test_session_tokens_respects_the_run_deadline(self):
+        import time
+        old = rt._deadline_at
+        rt._deadline_at = time.time() - 1
+        try:
+            self.assertIsNone(rt.session_tokens(sys.executable, [str(FAKE), "export", "{session}"], "s", ".", None, None))
+        finally:
+            rt._deadline_at = old
+        self.assertEqual(rt.session_tokens(sys.executable, [str(FAKE), "export", "{session}"], "s", ".", None, None)["total"], 105)
+
+
+class ReviewFixesEndToEndTest(test_v02.E2EBase):
+    def test_reused_out_is_refused_before_anything_changes(self):
+        self.config([{"id": "a", "adapter": "fake", "models": ["vote-A"]}, {"id": "b", "adapter": "fake", "models": ["vote-A-2"]}])
+        _, _, _, run = self.run_council("--rounds", "1")
+        before = (run / "decision.md").read_text()
+        p = self.cli("run", "--brief", str(self.tmp / "brief.md"), "--seats", "t", "--out", str(run), "--detach", rc=1)
+        self.assertIn("already holds a run", p.stderr)
+        self.assertEqual((run / "decision.md").read_text(), before)
+
+    def test_carried_is_cleared_when_a_later_round_succeeds_and_level_persists(self):
+        # c crashes on its round-2 prompt only (first cross-exam), then answers round 3 -> not carried at the end
+        self.config([{"id": "a", "adapter": "fake", "models": ["vote-A"]},
+                     {"id": "b", "adapter": "fake", "models": ["vote-A-2"]},
+                     {"id": "c", "adapter": "late", "models": ["vote-B", "vote-B-2"]}])
+        cfg = json.loads((self.tmp / "cfg.json").read_text())
+        cfg["adapters"]["late"] = {"bin": sys.executable, "argv": [str(FAKE), "{model}", "--crash-in-round=2"], "stdin": True}
+        (self.tmp / "cfg.json").write_text(json.dumps(cfg))
+        res, md, _, _ = self.run_council("--rounds", "3")
+        c = res["seats"]["c"]
+        self.assertIsNone(c.get("carried"))
+        self.assertNotIn("## Carried ballots", md)
+        calls = [(a["round"], a["level"]) for h in c["history"] for a in h["attempts"]]
+        self.assertEqual(calls, [(1, 0), (2, 0), (2, 1), (3, 1)])  # round 3 starts where round 2 ended
+        self.assertLessEqual(res["usage"]["per_seat"]["c"]["calls"], rt.seat_max_calls(2, 3))
+
+
 class BriefPackTest(unittest.TestCase):
     """The sample briefs parse into the options they intend and carry nothing the secret scan blocks."""
     DIR = Path(rt.__file__).resolve().parent.parent / "references" / "briefs"
@@ -357,8 +454,11 @@ class VersionSyncTest(unittest.TestCase):
             "SKILL.md": re.search(r"(?m)^version:\s*(\S+)", (root / "skills/llm-roundtable/SKILL.md").read_text()).group(1),
             "roundtable.py": rt.VERSION,
             "CHANGELOG.md": re.search(r"(?m)^## (\d+\.\d+\.\d+)", (root / "CHANGELOG.md").read_text()).group(1),
+            "CITATION.cff": re.search(r"(?m)^version:\s*\"?([\d.]+)", (root / "CITATION.cff").read_text()).group(1),
         }
         self.assertEqual(len(set(found.values())), 1, found)
+        top = re.search(r"(?m)^## .*$", (root / "CHANGELOG.md").read_text()).group(0)
+        self.assertRegex(top, r"^## \d+\.\d+\.\d+ \(\d{4}-\d{2}-\d{2}\)$")  # dated, never "(unreleased)"
         market = json.loads((root / ".claude-plugin/marketplace.json").read_text())
         self.assertEqual(market["plugins"][0]["source"], "./skills/llm-roundtable")
         self.assertNotIn("version", market["plugins"][0])  # the version lives in plugin.json only

@@ -67,7 +67,7 @@ class ParseTest(unittest.TestCase):
 
     def test_seat_env_drops_unrelated_credentials(self):
         os.environ.update(GH_TOKEN="x", ANTHROPIC_API_KEY="y", AWS_SECRET_ACCESS_KEY="z", PATH_EXTRA="p")
-        env = rt.seat_env("s")
+        env = rt.seat_env("s", auth=("ANTHROPIC_",))
         self.assertNotIn("GH_TOKEN", env)
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
         self.assertEqual((env["ANTHROPIC_API_KEY"], env["PATH_EXTRA"], env["ROUNDTABLE_SEAT"]), ("y", "p", "s"))

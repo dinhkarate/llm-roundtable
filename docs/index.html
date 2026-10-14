@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>llm-roundtable: a multi-LLM council for AI coding agents</title>
-<meta name="description" content="Open-source Agent Skill: Claude Fable, Claude Opus, GPT (Codex), Grok, Gemini and a free OpenCode model answer blind, cross-examine each other anonymously and cast evidence-weighted votes when your coding agent would otherwise wait for you. Works with Claude Code, Codex CLI, Grok CLI, Antigravity and OpenCode.">
+<meta name="description" content="Open-source Agent Skill: Claude Fable, Claude Opus, GPT (Codex), Grok and Gemini (plus an opt-in free OpenCode model) answer blind, cross-examine each other anonymously and cast evidence-weighted votes when your coding agent would otherwise wait for you. Works with Claude Code, Codex CLI, Grok CLI, Antigravity and OpenCode.">
 <link rel="canonical" href="https://dinhkarate.github.io/llm-roundtable/">
 <meta property="og:type" content="website">
 <meta property="og:title" content="llm-roundtable: a multi-LLM council for AI coding agents">
-<meta property="og:description" content="Six models from five vendors gather evidence, cross-examine anonymously and vote, so your agent keeps working while you sleep.">
+<meta property="og:description" content="Five models from four vendors gather evidence, cross-examine anonymously and vote, so your agent keeps working while you sleep.">
 <meta property="og:url" content="https://dinhkarate.github.io/llm-roundtable/">
 <meta property="og:image" content="https://raw.githubusercontent.com/dinhkarate/llm-roundtable/main/assets/social-preview.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -18,7 +18,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareSourceCode",
   "name": "llm-roundtable",
-  "description": "A multi-LLM council for autonomous AI coding agents. Models from five vendors answer blind, cross-examine each other anonymously, rate each other's evidence and cast weighted votes. Packaged as an Agent Skill plus a stdlib-only Python script.",
+  "description": "A multi-LLM council for autonomous AI coding agents. Models from four or five vendors answer blind, cross-examine each other anonymously, rate each other's evidence and cast weighted votes. Packaged as an Agent Skill plus a stdlib-only Python script.",
   "codeRepository": "https://github.com/dinhkarate/llm-roundtable",
   "programmingLanguage": "Python",
   "runtimePlatform": ["Claude Code", "Codex CLI", "Grok CLI", "Antigravity", "OpenCode"],
@@ -33,7 +33,7 @@
   "@type": "FAQPage",
   "mainEntity": [
     {"@type": "Question", "name": "What is llm-roundtable?",
-     "acceptedAnswer": {"@type": "Answer", "text": "An open-source LLM council for coding agents. When an unattended agent would stop to ask its user to choose, approve or review something, it convenes Claude Fable, Claude Opus, GPT via Codex, Grok, Gemini via Antigravity and a free OpenCode model. They cite evidence, review each other anonymously and vote; the verdict is a weighted vote, not a chairman model's summary."}},
+     "acceptedAnswer": {"@type": "Answer", "text": "An open-source LLM council for coding agents. When an unattended agent would stop to ask its user to choose, approve or review something, it convenes Claude Fable, Claude Opus, GPT via Codex, Grok and Gemini via Antigravity, optionally with a free OpenCode model. They cite evidence, review each other anonymously and vote; the verdict is a weighted vote, not a chairman model's summary."}},
     {"@type": "Question", "name": "Does llm-roundtable need API keys?",
      "acceptedAnswer": {"@type": "Answer", "text": "No. It calls the official CLIs you are logged into (claude, codex, grok, agy, opencode), so it uses your existing subscriptions. OpenCode free models need no login."}},
     {"@type": "Question", "name": "How is the verdict computed?",
@@ -71,7 +71,7 @@
 <body>
 <main>
   <h1>llm-roundtable</h1>
-  <p class="lead">A multi-LLM council for autonomous coding agents. When your agent would stop and wait for you, Claude, GPT, Grok, Gemini and a free OpenCode model gather evidence, cross-examine each other anonymously and vote.</p>
+  <p class="lead">A multi-LLM council for autonomous coding agents. When your agent would stop and wait for you, Claude, GPT, Grok and Gemini (plus an opt-in free OpenCode model) gather evidence, cross-examine each other anonymously and vote.</p>
 
   <div class="cta">
     <a class="btn primary" href="https://github.com/dinhkarate/llm-roundtable">⭐ Star on GitHub</a>
@@ -92,12 +92,12 @@ npx llm-roundtable run --brief brief.md --default C                # last line: 
 
   <h2>Why a council, and why a vote</h2>
   <ul class="points">
-    <li><b>Five vendors, your subscriptions.</b> Drives the claude, codex, grok, agy and opencode CLIs. No API keys, no MCP server.</li>
+    <li><b>Four vendors (five with OpenCode), your subscriptions.</b> Drives the claude, codex, grok, agy and opencode CLIs. No API keys, no MCP server.</li>
     <li><b>Evidence or it does not count.</b> Every ballot needs a sourced FACT or INFERENCE; peers rate it 0-2 and the rating scales the vote.</li>
     <li><b>Anonymous cross-examination.</b> Round 2 shows positions as M1..Mn, shuffled, in fresh sessions, which reduces sycophancy and self-bias (ACL 2026).</li>
     <li><b>A vote, not a chairman.</b> Most of the benefit of multi-agent debate comes from voting (Debate or Vote, NeurIPS 2025), so the verdict is arithmetic.</li>
     <li><b>Never blocks.</b> One-level fallback per model family, then UNATTENDED; ties go to the Fable seat; undecided falls back to your safe default.</li>
-    <li><b>Read-only and sandboxed.</b> Publishing tools removed, credentials stripped, workspace fingerprinted before and after.</li>
+    <li><b>Read-only and sandboxed by default.</b> Publishing tools removed, each seat keeps only its own CLI's credentials, workspace fingerprinted after every round. The opt-in OpenCode seat is not sandboxed.</li>
   </ul>
 
   <h2>Works from</h2>
@@ -112,11 +112,11 @@ npx llm-roundtable run --brief brief.md --default C                # last line: 
     <dt>What is an LLM council?</dt>
     <dd>A group of language models that answer the same question independently, then combine their answers through review and voting.</dd>
     <dt>How long does a council take?</dt>
-    <dd>About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. One blind round halves it.</dd>
+    <dd>About 10 model calls (5 seats × 2 rounds), typically 5-20 minutes. One blind round halves it.</dd>
     <dt>Can it review a pull request?</dt>
     <dd>Yes: <code>--mode review --workspace .</code> gives read-only repo access and the options become APPROVE / CHANGES / REJECT.</dd>
     <dt>Will it change my code?</dt>
-    <dd>No. Members are read-only; a changed workspace marks the run TAINTED with no verdict.</dd>
+    <dd>Not with the default seats: they are read-only, and a changed workspace marks the run TAINTED with no verdict. The opt-in OpenCode seat is not sandboxed.</dd>
   </dl>
 
   <footer>MIT licensed · <a href="https://github.com/dinhkarate/llm-roundtable">github.com/dinhkarate/llm-roundtable</a> · <a href="https://github.com/dinhkarate/llm-roundtable/blob/main/README.vi.md">Tiếng Việt</a></footer>

@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Hội đồng AI ra quyết định cho coding agent khi bạn vắng mặt.</b><br>
-  Fable, Opus, GPT (Codex), Grok, Gemini và một model free của OpenCode thu thập bằng chứng,
+  Fable, Opus, GPT (Codex), Grok, Gemini (thêm một model free của OpenCode nếu bật) thu thập bằng chứng,
   chất vấn nhau ẩn danh rồi bỏ phiếu có trọng số.
 </p>
 
@@ -23,7 +23,7 @@ làm theo phán quyết và để lại vết (PR, issue, commit) cho bạn đ�
 - **Dùng subscription sẵn có**: gọi CLI `claude`, `codex`, `grok`, `agy`, `opencode`. Không cần API key, không cần MCP.
 - **Không có bằng chứng thì phiếu không được tính**: phải có ít nhất một `FACT`/`INFERENCE` có nguồn; các ghế khác chấm bằng chứng 0-2, điểm này nhân vào trọng số.
 - **Chất vấn ẩn danh**: vòng 2 thấy lập trường dưới tên M1..Mn, xáo thứ tự, phiên mới, nên không model nào nhận ra câu của mình.
-- **An toàn**: ghế chỉ đọc (sandbox kernel hoặc allowlist), tắt tool đăng ra ngoài, bỏ credential không liên quan, so workspace sau mỗi vòng; ghế claude không nhận hook hay memory của bạn (`--restricted`).
+- **An toàn**: các ghế mặc định chỉ đọc (sandbox kernel, allowlist hoặc bản sao workspace), tắt tool đăng ra ngoài, mỗi ghế chỉ nhận credential của chính CLI mình, so workspace (cả file gitignored như `.env`, trừ node_modules/target/cache) sau mỗi vòng; ghế claude không nhận hook hay memory của bạn (`--restricted`, cần Claude Code ≥ 2.1.248). Ghế OpenCode **không có sandbox** (service nền của nó chạy được lệnh shell bất kỳ đâu) nên mặc định tắt; bật bằng `--seats full-open` hoặc preset `solo-*`, `--private` sẽ bỏ nó.
 - **Khó bị dắt mũi**: file và câu trả lời của ghế khác chỉ là dữ liệu: lập trường vòng 2 nằm trong rào có nonce riêng mỗi prompt, ghế báo lại chỗ có prompt injection, và trích `file:line` không có trong repo thì không còn được tính là FACT.
 - **Đo được**: mỗi lần chạy ghi số lần gọi CLI, thời gian và số token từng CLI dùng.
 - **Không bao giờ treo**: fallback đúng một cấp rồi UNATTENDED; hoà thì Fable quyết; không quyết được thì lấy `--default` an toàn.
@@ -57,7 +57,7 @@ Brief mẫu để chép: [`references/briefs/`](skills/llm-roundtable/references
 dependency, ship hay hoãn, review PR).
 
 Kết quả ở `~/.roundtable/runs/<thời gian>-<slug>/decision.md` (+ `result.json`, transcript từng vòng).
-Dòng cuối luôn là `VERDICT: <option|NONE> (council|tiebreak|default|none)`.
+Dòng cuối luôn là `VERDICT: <option|NONE> (council|tiebreak|default|none|workspace_changed)`.
 
 Trong agent bạn không cần gõ lệnh: skill [`SKILL.md`](skills/llm-roundtable/SKILL.md) hướng dẫn agent tự viết brief,
 chạy nền, theo dõi và làm theo phán quyết. Gọi tay bằng `/llm-roundtable`, "hội bàn tròn", "hội đồng".

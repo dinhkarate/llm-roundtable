@@ -49,11 +49,11 @@ Tested 2026-10-14 by asking each CLI, headless, to find the skill and run a `duo
 
 | Seat | CLI | One-time login |
 |---|---|---|
-| fable, opus | `claude` | `claude` (subscription) |
+| fable, opus | `claude` | `claude` (subscription); Claude Code 2.1.248 or later (`--restricted`), `doctor` reports an older one as `outdated` |
 | codex | `codex` | `codex login` (ChatGPT plan) |
 | grok | `grok` | `grok login` |
 | gemini | `agy` | run `agy` once (an account the provider has disabled answers 403 PERMISSION_DENIED: the seat is UNATTENDED and skips its fallback) |
-| opencode | `opencode` | none for free models |
+| opencode (opt-in) | `opencode` | none for free models |
 
 Missing CLIs are not errors: those seats become UNATTENDED and the rest still vote.
 
@@ -68,7 +68,9 @@ Missing CLIs are not errors: those seats become UNATTENDED and the rest still vo
 | OpenCode | custom | several free models from different labs (`"count": 3`) | free models may train on prompts: never with private data |
 
 Recommendation: wherever possible keep at least three different vendor families. Installing
-`opencode` is the cheapest way to add one (free models, no login).
+`opencode` is the cheapest way to add one (free models, no login), with a caveat: it is not sandboxed (its
+background service can run shell commands), so it is left out of `full`. `full-open` and the `solo-*` presets
+include it; `--private` drops it.
 
 ## Orca (optional)
 
@@ -81,6 +83,8 @@ such as a Windows box) instead of a subprocess.
 
 Put a JSON file at `~/.config/roundtable/seats.json` (or pass `--config`). Same shape as
 `scripts/seats.json`; `adapters` and `presets` merge by key, `seats` patch by `id`, new ids are added.
+An adapter gets no secret-looking environment variables except the prefixes in its `auth_env`: list the ones its
+CLI logs in with, or a key-based CLI will start without its key.
 
 ```json
 {
@@ -89,8 +93,8 @@ Put a JSON file at `~/.config/roundtable/seats.json` (or pass `--config`). Same 
     {"id": "fable", "weight": 1.2},
     {"id": "qwen", "adapter": "qwen", "family": "qwen", "models": ["qwen3-coder-plus"], "weight": 1.0}
   ],
-  "adapters": {"qwen": {"bin": "qwen", "argv": ["-m", "{model}", "-p", "{prompt}"]}},
-  "presets": {"full": ["fable", "opus", "codex", "grok", "gemini", "opencode", "qwen"]}
+  "adapters": {"qwen": {"bin": "qwen", "argv": ["-m", "{model}", "-p", "{prompt}"], "auth_env": ["DASHSCOPE_", "QWEN_"]}},
+  "presets": {"full": ["fable", "opus", "codex", "grok", "gemini", "qwen"]}
 }
 ```
 

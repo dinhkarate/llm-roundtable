@@ -1,6 +1,27 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-10-15)
+
+Fixes from the release review (council, `--mode review`, CHANGES 5/5):
+
+- **Default council changed:** `full` is fable, opus, codex, grok, gemini. The free OpenCode seat is not a sandbox
+  (its background service can run shell commands), so it is opt-in: `--seats full-open` or the `solo-*` presets.
+  Its adapter now runs on a snapshot copy of the workspace (`isolate`). Docs no longer claim every seat is read-only.
+- Each seat keeps only its own CLI's credentials (`auth_env` prefixes per adapter); before, every seat received
+  every vendor's API-key variables. Custom adapters must list theirs.
+- The workspace fingerprint also covers gitignored files (path/size/mtime, e.g. `.env`) outside the skip list.
+- Source check: files inside skipped dirs are looked up on disk instead of being called missing; line 0 and
+  reversed ranges are malformed; the end of `file:a-b` is checked; a path with a directory must match that
+  directory (no basename-only match); bare `host:port` is not a citation.
+- `run` refuses an `--out` that already holds a run, so `status` cannot report an old verdict as DONE.
+- A carried marker is cleared when a later round replaces the ballot; after a failed round a seat starts the next
+  one on the last model level it tried, so the dry-run call bound holds.
+- A CLI that rejects a flag ("unknown option") is not retried on the fallback; `doctor` reports `outdated` when
+  the CLI's `--help` lacks a required flag. `--restricted` needs Claude Code 2.1.248 or later.
+- opencode's `session export` is cut by `--deadline` and reaped on stop.
+- CITATION.cff at 0.2.0; the version-sync test covers it and rejects an undated changelog heading.
+
+Features:
 
 - Versioned result contract: `result.json` carries `schema_version: 2`; `status --json` prints one object with
   `state` (STARTING/RUNNING/DONE/TAINTED/FAILED), `verdict`, `decided_by`, `actionable`, `council_verdict`, margin,

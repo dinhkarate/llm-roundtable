@@ -1,6 +1,6 @@
 # llm-roundtable
 
-> llm-roundtable is an open-source multi-LLM council for autonomous AI coding agents, packaged as an Agent Skill plus one stdlib-only Python script (MIT). When an agent would stop and ask its user to choose, approve or review something, it convenes six models from five vendors (Claude Fable 5.1, Claude Opus 5.5, GPT-6.1 via Codex CLI, Grok 4.7, Gemini 3.8 Flash via Antigravity, and the newest free OpenCode model). Members answer blind, cross-examine each other anonymously (M1..Mn), rate each other's evidence 0-2, and vote. The verdict is a weighted vote, not a chairman model's summary.
+> llm-roundtable is an open-source multi-LLM council for autonomous AI coding agents, packaged as an Agent Skill plus one stdlib-only Python script (MIT). When an agent would stop and ask its user to choose, approve or review something, it convenes five models from four vendors by default (Claude Fable 5.1, Claude Opus 5.5, GPT-6.1 via Codex CLI, Grok 4.7, Gemini 3.8 Flash via Antigravity), plus the newest free OpenCode model when opted in. Members answer blind, cross-examine each other anonymously (M1..Mn), rate each other's evidence 0-2, and vote. The verdict is a weighted vote, not a chairman model's summary.
 
 Key facts:
 - Install: `npx skills add dinhkarate/llm-roundtable --skill llm-roundtable` (skill for every agent) or `npx llm-roundtable` (CLI). Claude Code can also install it as a plugin: `/plugin marketplace add dinhkarate/llm-roundtable`, then `/plugin install llm-roundtable@llm-roundtable`.
@@ -9,7 +9,8 @@ Key facts:
 - Vote weight = seat weight × (0.5 + 0.5 × mean peer evidence rating). Ballots without a sourced FACT or INFERENCE do not count.
 - Ties go to the Fable seat; fewer than 2 valid ballots = NO QUORUM; TIE or NO QUORUM falls back to the user's safe `--default`.
 - Each seat falls back one model level in the same family, then is marked UNATTENDED; the council never blocks.
-- Seats are read-only and sandboxed, publishing tools are removed, Claude seats run without the user's hooks or memory, and the workspace is fingerprinted after every round (a change stops the run as TAINTED).
+- Default seats (Fable, Opus, Codex, Grok, Gemini) are read-only and sandboxed, publishing tools are removed, each seat keeps only its own CLI's credentials, Claude seats run without the user's hooks or memory (`--restricted`, Claude Code >= 2.1.248), and the workspace (tracked, untracked and gitignored files outside dependency/build dirs) is fingerprinted after every round (a change stops the run as TAINTED).
+- The free OpenCode seat is opt-in (`--seats full-open`, solo presets) and not a sandbox: its background service can run shell commands; it works in a snapshot copy and `--private` drops it.
 - Prompt-injection hardening: files and other members' text are data; cross-exam positions are fenced with a per-prompt nonce, seats report steering attempts (`injection_suspected`), and a FACT whose every `file:line` is missing from the workspace is downgraded to ASSUMPTION.
 - Account-level limits (Claude session limit, a disabled account) skip the same-account fallback.
 - Review mode (`--mode review --workspace .`) approves or rejects plans, diffs and pull requests: APPROVE / CHANGES / REJECT.

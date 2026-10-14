@@ -13,20 +13,24 @@
   | codex | `-s read-only` sandbox (kernel) | `--disable apps computer_use browser_use` |
   | grok | `--sandbox read-only` (kernel; temp dirs stay writable) | no MCP configured |
   | agy | `--sandbox` without `--dangerously-skip-permissions` (that flag can lift the sandbox, agy issue #36; headless then denies prompt-gated tools like read_url) and `"isolate": true`: with `--workspace` it works in a snapshot copy of the checkout's tracked + untracked files | no MCP configured |
-  | opencode | `--agent plan` and `PWD` set to its sandbox; **not** a sandbox: its background service can still run shell commands anywhere (`--private` drops this seat) | no MCP configured |
+  | opencode (opt-in, not in `full`) | `--agent plan`, `"isolate": true` (cwd and `PWD` are a snapshot copy of the workspace); **not** a sandbox: its background service can still run shell commands anywhere (`--private` drops this seat) | no MCP configured |
 
   Plan modes are avoided on claude and grok: they inject "write a plan, exit plan mode" instructions
   and end headless runs before the ballot. Each call gets `ROUNDTABLE_SEAT=<id>` so a seat that loads
-  this skill cannot start a nested council. With `--workspace`, the script fingerprints it before and
-  after (git checkout, also from a subdirectory: HEAD, status, diff, untracked file hashes; otherwise
-  path/size/mtime of every file); any change gives a WARNING banner and exit code 3. Secret-looking
+  this skill cannot start a nested council. With `--workspace`, the script fingerprints it before the
+  council and after every round (git checkout, also from a subdirectory: HEAD, status, diff, untracked file
+  hashes, and path/size/mtime of gitignored files such as `.env`, up to 20,000; otherwise path/size/mtime of
+  every file). Dirs in the skip list (`.git`, `node_modules`, `.venv`, `venv`, `__pycache__`, `dist`, `build`,
+  `target`, test/type caches) are not watched. Any change gives a WARNING banner and exit code 3. Secret-looking
   strings that seats quote are redacted before the cross-exam dossier goes to the other vendors.
 - **Isolation of the anonymity**: seat working directories are fresh temp dirs outside the run
   directory, and `rN_labels.json` is written only after round N has finished.
 - **Cleanup**: SIGINT/SIGTERM/exit kill every running seat's process group.
 - **Provenance**: a ballot is read only from the seat's final answer (stdout, or codex's last message), never
   from stderr or echoed tool output. Seats get the parent environment minus credentials their CLI does not
-  need. Prompts and transcripts live in a temp dir during a round and are copied into the run dir after it.
+  need: every secret-looking variable (TOKEN, SECRET, API_KEY, ...) is removed except those whose prefix the
+  seat's own adapter lists in `auth_env` (claude: `ANTHROPIC_`, `CLAUDE_`; codex: `OPENAI_`, `CODEX_`; grok:
+  `XAI_`, `GROK_`; agy: `GEMINI_`, `GOOGLE_`, `AGY_`; opencode: `OPENCODE_`). Prompts and transcripts live in a temp dir during a round and are copied into the run dir after it.
 - **Tainted runs**: a changed workspace makes the run non-actionable: `VERDICT: NONE (workspace_changed)`,
   `run` exits 3, `status` prints TAINTED and exits 4. The fingerprint is compared after every round, so a write
   in round 1 stops the council before round 2 (`workspace_changed_at: "after round 1"`).
@@ -55,8 +59,12 @@ Evidence types: `FACT` (verified, with a source), `INFERENCE` (reasoned from cit
 `ASSUMPTION` (unverified), `UNKNOWN` (an open question that matters and that the seat could not answer).
 FACT or INFERENCE items without a source are downgraded to ASSUMPTION.
 With `--workspace`, a mechanical **source check** also downgrades a FACT or INFERENCE item when every
-`file:line` its source cites is missing from the workspace (matched by path or path suffix; build/vendor
-dirs such as node_modules are not indexed) or lies past the end of the file. Sources without a `file:line`
+`file:line` its source cites is missing from the workspace, malformed (line 0, end before start) or past the
+end of the file (for `file:a-b`, line `b` counts). A cited path with a directory must be a workspace path or
+end with one (`sub/mod.py` matches `pkg/sub/mod.py`, `other/mod.py` does not); an absolute path must be inside
+the workspace or end with a workspace path that has a directory part; a bare name (`mod.py`) matches any file
+of that name. Files inside skipped dirs (node_modules, target, ...) are looked up on disk. A bare
+`host:port` is not a citation: without a `/`, only known file extensions count. Sources without a `file:line`
 (URLs, commands, docs) are never judged; this checks that a citation exists, not what it says (that would
 be a chairman). Downgraded items keep the reason (`downgraded`), peers see them as ASSUMPTION, and
 decision.md lists them under "Sources that did not check out".
@@ -92,6 +100,11 @@ CLI missing on PATH -> UNATTENDED immediately
 - Status is taken from the process: a parsed ballot wins; otherwise stderr/stdout is matched against
   quota patterns (rate limit, 429, usage limit, quota, credits...) and unavailable patterns
   (unknown model, not supported, deprecated, may not exist...).
+- A CLI that rejects a flag of its adapter ("unknown option", too old: `--restricted` needs Claude Code >= 2.1.248)
+  does not walk to the fallback either (same CLI); the UNATTENDED detail says so, and `doctor` reports the seat
+  `outdated` when the CLI's `--help` lacks a flag listed in the adapter's `requires.flags`.
+- When a later round fails for a seat, its next round starts on the last model level it tried (the chain only
+  moves down), so `run --dry-run`'s call bound holds.
 - Account-level limits (Claude "session limit"/"weekly limit", an account disabled by the provider) do not
   walk to the fallback model: it runs on the same account and would fail the same way. The seat is
   UNATTENDED with "account-level limit, fallback skipped".
@@ -186,7 +199,7 @@ A call whose CLI reported nothing (agy, a crash, a timeout) counts in `calls_wit
 `status --json` prints `state` (STARTING, RUNNING, DONE, TAINTED, FAILED), `verdict`, `decided_by`,
 `actionable` (DONE with a verdict), `council_verdict`, `share`, `share_of`, `min_margin`, `narrow_margin`,
 `framing_concern`, `framing`, `conditions`, `kill_criteria_for`, `kill_criteria`, `unresolved_questions`,
-`unattended`, `early_stop`, `low_diversity`, `injection_suspected`, `downgraded_sources` (a count),
+`unattended`, `carried`, `early_stop`, `low_diversity`, `injection_suspected`, `downgraded_sources` (a count),
 `usage` (without `per_seat`) and `decision_md`. Exit codes match plain `status`
 (0, 4 for TAINTED, 1 for FAILED).
 
@@ -198,7 +211,8 @@ rounds, `timeout_per_call`, quorum, each seat (`primary`, `fallback`, `fallback_
 32 KB). It creates no run directory and calls no model; seat discovery does run. Bounds, per seat with
 `n` models over `r` rounds: `max_calls = 2 x (r + n - 1)` (each model call may get one nudge, and the
 level only moves down the chain); `max_wall_secs = rounds run x 2 x max n x timeout`, capped by
-`--deadline`. Both exclude discovery, the workspace snapshot/fingerprint and CLI start-up.
+`--deadline`. Both exclude discovery, the workspace snapshot/fingerprint, CLI start-up and opencode's local
+`session export` (at most 60 s, cut by `--deadline`).
 
 ## Outcomes and the ledger
 
