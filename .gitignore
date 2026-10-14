@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .roundtable/
+
+# drafts for the owner to review, never published
+launch/
