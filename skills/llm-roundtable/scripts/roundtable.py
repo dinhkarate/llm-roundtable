@@ -42,7 +42,8 @@ DEAD_FILE = RUNS_DIR.parent / "dead-models.json"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 QUOTA_RE = re.compile(
     r"rate.?limit|quota|usage limit|too many requests|\b429\b|insufficient (credit|balance|funds)|"
-    r"credit balance|limit (reached|exceeded)|resource.?exhausted|overloaded|out of credits|try again (later|in)",
+    r"credit balance|limit (reached|exceeded)|(session|weekly|daily|hourly) limit|hit your .{0,20}limit|"
+    r"resource.?exhausted|overloaded|out of credits|try again (later|in)",
     re.I,
 )
 UNAVAILABLE_RE = re.compile(

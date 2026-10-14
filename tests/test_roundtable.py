@@ -83,6 +83,8 @@ class ParseTest(unittest.TestCase):
         q = rt.classify({"rc": 1, "text": "", "noise": "Error: rate limit exceeded"}, ["A", "B"])
         u = rt.classify({"rc": 1, "text": "", "noise": "Couldn't set model: unknown model id"}, ["A", "B"])
         self.assertEqual((q["status"], u["status"]), ("quota", "unavailable"))
+        s = rt.classify({"rc": 1, "text": "", "noise": "You've hit your session limit · resets 11pm (Asia/Saigon)"}, ["A", "B"])
+        self.assertEqual(s["status"], "quota")
 
     def test_no_evidence_is_flagged(self):
         r = rt.classify({"rc": 0, "text": '{"vote": "A", "evidence": [{"type": "ASSUMPTION", "claim": "x"}]}', "noise": ""}, ["A", "B"])
