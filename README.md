@@ -164,14 +164,15 @@ Details and sources: [`docs/research.md`](docs/research.md).
 
 | | llm-roundtable | [karpathy/llm-council](https://github.com/karpathy/llm-council) | [claude-skills-llm-council](https://github.com/aiwithremy/claude-skills-llm-council) | [council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) | [Zen / PAL MCP](https://github.com/BeehiveInnovations/zen-mcp-server) `consensus` |
 |---|---|---|---|---|---|
-| Model access | your CLI subscriptions | OpenRouter API key | Claude only (5 persona subagents) | Claude subagents + CLIs | provider API keys |
+| Model access | your CLI subscriptions | OpenRouter API key | Claude only (5 persona subagents) | Claude subagents + codex / gemini / ollama / cursor-agent CLIs, 18 personas | provider API keys |
 | Vendors per council | 5 (Anthropic, OpenAI, xAI, Google, OpenCode free) | any via OpenRouter | 1 | Claude + Codex/Gemini/Ollama | any via API |
-| Decision | weighted vote, evidence-rated by peers | chairman model synthesises | chairman synthesises | weighted count over personas | conversation, no vote rule |
-| Anonymous peer review | yes, fresh session per round | yes (Response A/B) | yes | no | no |
+| Decision | weighted vote, evidence-rated by peers | chairman model synthesises | chairman synthesises | confidence-weighted tally (2/3 to pass), then a chairman writes the verdict | conversation, no vote rule |
+| Anonymous peer review | yes, fresh session per round | yes (Response A/B) | yes | yes (relabelled by the coordinator) | no |
 | Evidence required to vote | yes, sourced FACT/INFERENCE | no | no | labels, not enforced | no |
-| Fallback when a model is down | one level, then UNATTENDED, never blocks | no | n/a | falls back to host | no |
+| Fallback when a model is down | one level, then UNATTENDED, never blocks | no | n/a | falls back to Claude | no |
 | Read-only, sandboxed members | yes, plus workspace tamper check | n/a (web app) | no | no | n/a |
-| Runs from | any agent with a shell | browser | Claude Code, Claude Cowork | Claude Code | hosts with MCP |
+| Undecided council | falls back to your safe `--default` | n/a | n/a | goes back to the user | n/a |
+| Runs from | any agent with a shell | browser | Claude Code, Claude Cowork | Claude Code, Codex, Gemini CLI, OpenCode | hosts with MCP |
 
 ## Supported hosts and seats
 
