@@ -27,6 +27,11 @@
   <a href="README.vi.md">Tiếng Việt</a>
 </p>
 
+<p align="center">
+  <a href="assets/demo.mp4"><img src="assets/demo.gif" alt="Demo: an overnight agent gets stuck on Postgres or SQLite, six models vote blind, cross-examine anonymously, and the weighted tally returns VERDICT: B (council)" width="100%"></a>
+  <br><sub>55-second demo (illustrative run) · <a href="assets/demo.mp4">MP4</a></sub>
+</p>
+
 ---
 
 **llm-roundtable** is an [Agent Skill](https://github.com/vercel-labs/skills) plus a single Python script.

@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llm-roundtable demo</title>
+<!--
+  Source of assets/demo.mp4 and assets/demo.gif. One deterministic timeline: window.seek(t) draws the
+  frame at t seconds, so a headless browser can screenshot frames at a fixed fps. Open the file
+  directly to watch it loop; add ?t=12.5 to freeze on one moment.
+-->
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3; --muted: #8b949e;
+    --fable: #d97757; --opus: #c96442; --codex: #10a37f; --grok: #d1d5db; --gemini: #4f8cf7; --opencode: #f5a524;
+    --ok: #3fb950; --bad: #f85149; --anon: #6e7681;
+    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: #000; height: 100%; overflow: hidden; }
+  #stage { position: absolute; left: 0; top: 0; width: 1280px; height: 720px; background: var(--bg);
+           color: var(--text); font-family: var(--sans); overflow: hidden; transform-origin: 0 0; }
+  .scene { position: absolute; inset: 0; opacity: 0; }
+  .cap { position: absolute; left: 0; right: 0; text-align: center; font-weight: 650; letter-spacing: -0.01em; }
+  .cap.top { top: 34px; font-size: 30px; }
+  .cap.bottom { bottom: 34px; font-size: 24px; color: var(--muted); font-weight: 500; }
+  .cap .hl { color: var(--text); }
+
+  /* terminal */
+  .term { position: absolute; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+          box-shadow: 0 30px 80px rgba(0,0,0,.55); overflow: hidden; }
+  .term .bar { height: 38px; border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 16px;
+               gap: 8px; font: 14px var(--mono); color: var(--muted); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+  .term .bar .title { margin-left: 14px; }
+  .term .bar .clock { margin-left: auto; color: var(--text); }
+  .term .body { padding: 22px 26px; font: 20px/1.75 var(--mono); white-space: pre; }
+  .term .ln { opacity: 0; }
+  .g { color: var(--ok); } .m { color: var(--muted); } .y { color: var(--opencode); } .r { color: var(--bad); }
+  .b { color: var(--gemini); } .w { font-weight: 700; }
+  .cursor { display: inline-block; width: 11px; height: 22px; background: var(--text); vertical-align: -4px; margin-left: 2px; }
+
+  /* title */
+  #s2 .name { position: absolute; top: 250px; left: 0; right: 0; text-align: center; font: 700 96px/1 var(--mono); letter-spacing: -0.03em; }
+  #s2 .sub { position: absolute; top: 380px; left: 0; right: 0; text-align: center; font-size: 34px; color: var(--muted); }
+  #s2 .orb { position: absolute; width: 18px; height: 18px; border-radius: 50%; }
+
+  /* council */
+  #table { position: absolute; left: 400px; top: 270px; width: 480px; height: 220px; border-radius: 50%;
+           background: radial-gradient(ellipse at 50% 40%, #1f2630, #141a21 70%); border: 1px solid var(--line);
+           display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; }
+  #table .q { font-size: 20px; font-weight: 650; max-width: 450px; line-height: 1.3; }
+  #table .opts { font: 15px/1.6 var(--mono); color: var(--muted); }
+  #table .note { font-size: 17px; color: var(--muted); max-width: 340px; line-height: 1.35; position: absolute; left: 0; right: 0; margin: 0 auto; }
+  .seat { position: absolute; width: 236px; height: 108px; margin-left: -118px; margin-top: -54px; background: var(--panel);
+          border: 2px solid var(--line); border-radius: 14px; padding: 11px 14px; opacity: 0; }
+  .seat .hd { display: flex; align-items: center; gap: 9px; height: 26px; }
+  .seat .sw { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+  .seat .nm { font-weight: 700; font-size: 19px; position: relative; flex: 1; height: 26px; }
+  .seat .nm span { position: absolute; left: 0; top: 0; white-space: nowrap; }
+  .seat .vote { font: 700 17px var(--mono); }
+  .seat .model { font: 13px var(--mono); color: var(--muted); margin-top: 2px; height: 18px; white-space: nowrap; }
+  .seat .ev { margin-top: 6px; font: 12.5px/1.45 var(--mono); overflow: hidden; height: 38px; position: relative; }
+  .seat .ev > div { position: absolute; left: 0; top: 0; right: 0; }
+  .chip { display: inline-block; padding: 1px 6px; border-radius: 5px; font-weight: 700; margin-right: 6px; font-size: 11.5px; }
+  .chip.fact { background: rgba(63,185,80,.18); color: var(--ok); }
+  .chip.inf { background: rgba(79,140,247,.2); color: var(--gemini); }
+  .rate { color: var(--opencode); letter-spacing: 1px; }
+  .flip { position: absolute; right: -10px; top: -16px; background: var(--ok); color: #0d1117; font: 700 12.5px var(--mono);
+          padding: 3px 8px; border-radius: 6px; opacity: 0; white-space: nowrap; }
+
+  /* tally */
+  #s6 .formula { position: absolute; top: 96px; left: 0; right: 0; text-align: center; font: 22px var(--mono); color: var(--muted); }
+  #s6 .formula b { color: var(--text); }
+  .barrow { position: absolute; left: 150px; width: 980px; height: 56px; display: flex; align-items: center; gap: 18px; }
+  .barrow .lab { width: 250px; font-size: 21px; font-weight: 650; text-align: right; white-space: nowrap; }
+  .barrow .track { flex: 1; height: 40px; background: #1b222b; border-radius: 8px; position: relative; overflow: hidden; }
+  .barrow .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; display: flex; overflow: hidden; }
+  .barrow .fill > i { display: block; height: 100%; overflow: hidden; }
+  .barrow .fill > i b { display: block; font: 700 13px/40px var(--mono); color: #0d1117; padding-left: 10px; white-space: nowrap; }
+  .barrow .val { width: 140px; font: 700 22px var(--mono); }
+  .barrow .val small { font: 14px var(--sans); color: var(--muted); font-weight: 500; display: block; }
+  #s6 .unatt { position: absolute; top: 470px; left: 150px; right: 150px; font: 19px/1.9 var(--mono); }
+  #s6 .unatt .ln { opacity: 0; }
+
+  /* outro */
+  #s8 .name { position: absolute; top: 170px; left: 0; right: 0; text-align: center; font: 700 72px/1 var(--mono); letter-spacing: -0.03em; }
+  #s8 .cmd { position: absolute; top: 300px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+             border-radius: 12px; padding: 18px 28px; font: 26px var(--mono); white-space: nowrap; }
+  #s8 .cmd .m { user-select: none; }
+  #s8 .gh { position: absolute; top: 420px; left: 0; right: 0; text-align: center; font-size: 30px; font-weight: 650; }
+  #s8 .hosts { position: absolute; top: 490px; left: 0; right: 0; text-align: center; font-size: 21px; color: var(--muted); }
+  #s8 .dots { position: absolute; top: 560px; left: 0; right: 0; display: flex; justify-content: center; gap: 14px; }
+  #s8 .dots i { width: 16px; height: 16px; border-radius: 50%; display: block; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 1. hook -->
+  <section class="scene" id="s1">
+    <div class="term" style="left:140px; top:110px; width:1000px; height:390px">
+      <div class="bar"><span class="dot" style="background:#f85149"></span><span class="dot" style="background:#d29922"></span><span class="dot" style="background:#3fb950"></span>
+        <span class="title">~/billing-service · claude · /loop</span><span class="clock">03:12 AM</span></div>
+      <div class="body"><div class="ln" id="h1"><span class="g">✓</span> migrated 14 handlers to the new queue</div><div class="ln" id="h2"><span class="g">✓</span> tests green <span class="m">(212 passed)</span></div><div class="ln" id="h3"><span class="y">●</span> next: pick storage for the billing ledger</div><div class="ln" id="h4"><span class="y">?</span> <span id="h4t"></span><span class="cursor" id="cur"></span></div></div>
+    </div>
+    <div class="cap bottom" id="c1" style="bottom:120px; font-size:38px; color:var(--text); font-weight:700">Your agent stops. <span style="color:var(--muted)">You're asleep.</span></div>
+  </section>
+
+  <!-- 2. title -->
+  <section class="scene" id="s2">
+    <div class="name">llm-roundtable</div>
+    <div class="sub">a council of AI models decides instead</div>
+    <div class="dots" id="s2dots" style="position:absolute;top:470px;left:0;right:0;display:flex;justify-content:center;gap:16px"><i class="orb" style="position:static;background:var(--fable)"></i><i class="orb" style="position:static;background:var(--opus)"></i><i class="orb" style="position:static;background:var(--codex)"></i><i class="orb" style="position:static;background:var(--grok)"></i><i class="orb" style="position:static;background:var(--gemini)"></i><i class="orb" style="position:static;background:var(--opencode)"></i></div>
+  </section>
+
+  <!-- 3-5. council -->
+  <section class="scene" id="council">
+    <div class="cap top" id="ctitle"></div>
+    <div id="table">
+      <div id="tq" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+        <div class="q">Postgres or SQLite for the billing service?</div>
+        <div class="opts">A Postgres · B SQLite + Litestream · C defer</div>
+      </div>
+      <div class="note" id="tn1">Every seat answers alone.<br>Nobody sees the others.</div>
+      <div class="note" id="tn2">Names hidden, order shuffled.<br>Rate the evidence, not the brand.</div>
+    </div>
+    <div id="seats"></div>
+    <div class="cap bottom" id="cbottom"></div>
+  </section>
+
+  <!-- 6. tally -->
+  <section class="scene" id="s6">
+    <div class="cap top">Weighted tally</div>
+    <div class="formula">weight = <b>seat</b> × (0.5 + 0.5 × <b>peer rating</b>)</div>
+    <div class="barrow" style="top:190px"><div class="lab">B · SQLite + Litestream</div><div class="track"><div class="fill" id="fb"></div></div><div class="val" id="vb"></div></div>
+    <div class="barrow" style="top:270px"><div class="lab">A · Postgres</div><div class="track"><div class="fill" id="fa"></div></div><div class="val" id="va"></div></div>
+    <div class="barrow" style="top:350px"><div class="lab">C · defer</div><div class="track"><div class="fill" id="fc"></div></div><div class="val" id="vc"></div></div>
+    <div class="unatt">
+      <div class="ln" id="u1"><span class="b">gemini</span>  gemini-3.8-flash <span class="y">quota</span> → 3.7-flash <span class="y">unavailable</span> → <span class="r">UNATTENDED</span></div>
+      <div class="ln" id="u2"><span class="g">✓</span> 5 valid ballots ≥ quorum 2 · <span class="m">no evidence, no vote · ties go to Fable</span></div>
+    </div>
+  </section>
+
+  <!-- 7. verdict -->
+  <section class="scene" id="s7">
+    <div class="term" style="left:110px; top:110px; width:1060px; height:400px">
+      <div class="bar"><span class="dot" style="background:#f85149"></span><span class="dot" style="background:#d29922"></span><span class="dot" style="background:#3fb950"></span>
+        <span class="title">~/billing-service · claude · /loop</span><span class="clock" id="clk2">03:24 AM</span></div>
+      <div class="body" style="font-size:19px"><div class="ln" id="v1"><span class="m">$</span> llm-roundtable run --brief brief.md --default C</div><div class="ln" id="v2"><span class="m">  r1 5/6 ok · r2 5/6 ok · gemini unattended</span></div><div class="ln" id="v3"><span class="w" style="color:var(--ok)">VERDICT: B (council)</span></div><div class="ln" id="v4"><span class="m">  wrote ~/.roundtable/runs/…-postgres-or-sqlite/decision.md</span></div><div class="ln" id="v5"><span class="g">✓</span> continuing /loop: SQLite + Litestream</div><div class="ln" id="v6"><span class="m">  conditions: nightly restore test · revisit at 1M rows</span></div></div>
+    </div>
+    <div class="cap bottom" id="c7" style="bottom:110px; font-size:30px; color:var(--text); font-weight:650">Work goes on. <span style="color:var(--muted)">Evidence, votes and dissent wait in decision.md.</span></div>
+  </section>
+
+  <!-- 8. outro -->
+  <section class="scene" id="s8">
+    <div class="name">llm-roundtable</div>
+    <div class="cmd"><span class="m">$ </span>npx skills add dinhkarate/llm-roundtable</div>
+    <div class="gh">github.com/dinhkarate/llm-roundtable ⭐</div>
+    <div class="hosts">Claude Code · Codex · Grok CLI · Antigravity · OpenCode · pi</div>
+    <div class="dots"><i style="background:var(--fable)"></i><i style="background:var(--opus)"></i><i style="background:var(--codex)"></i><i style="background:var(--grok)"></i><i style="background:var(--gemini)"></i><i style="background:var(--opencode)"></i></div>
+  </section>
+</div>
+
+<script>
+const DURATION = 55;
+const $ = id => document.getElementById(id);
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const ease = x => { x = clamp(x); return x < .5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2; };
+const prog = (t, a, b) => ease((t - a) / (b - a));
+// opacity of a window [a, b] with fades at both ends
+const win = (t, a, b, f = 0.45) => Math.min(prog(t, a, a + f), 1 - prog(t, b - f, b));
+const show = (el, o, dy = 0) => { el.style.opacity = o; el.style.transform = dy ? `translateY(${(1 - o) * dy}px)` : ""; };
+
+// seats on an ellipse around the table (center 640,380)
+const SEATS = [
+  { id: "fable",    name: "Fable",          model: "claude-fable-5-1",  c: "--fable",    ang: 240, anon: "M4", r1: "B", r2: "B", chip: ["fact", "FACT", "40k writes/day ≪ SQLite WAL limits"], rate: 2, tb: true },
+  { id: "opus",     name: "Opus",           model: "claude-opus-5-5",   c: "--opus",     ang: 300, anon: "M2", r1: "A", r2: "B", chip: ["inf", "INFER", "replicas may be needed later"], rate: 1.5 },
+  { id: "codex",    name: "GPT · Codex",    model: "gpt-6.1-sol",       c: "--codex",    ang: 0,   anon: "M3", r1: "B", r2: "B", chip: ["fact", "FACT", "Litestream restores to any point (S3)"], rate: 2 },
+  { id: "grok",     name: "Grok",           model: "grok-4.7",          c: "--grok",     ang: 60,  anon: "M5", r1: "B", r2: "B", chip: ["inf", "INFER", "one VPS → fewer moving parts"], rate: 1.5 },
+  { id: "gemini",   name: "Gemini · agy",   model: "gemini-3.8-flash",  c: "--gemini",   ang: 120, anon: "—",  r1: null, r2: null, chip: null },
+  { id: "opencode", name: "OpenCode free",  model: "opencode/cat-jam",  c: "--opencode", ang: 180, anon: "M1", r1: "A", r2: "A", chip: ["fact", "FACT", "pg handles many concurrent writers"], rate: 0.75 },
+];
+const seatsEl = $("seats");
+for (const s of SEATS) {
+  const a = s.ang * Math.PI / 180;
+  const x = 640 + Math.cos(a) * 455, y = 380 + Math.sin(a) * 230;
+  const d = document.createElement("div");
+  d.className = "seat"; d.id = "seat-" + s.id;
+  d.style.left = x + "px"; d.style.top = y + "px";
+  d.innerHTML = `<div class="flip">changed: evidence M3</div>
+    <div class="hd"><span class="sw"></span><div class="nm"><span class="real">${s.name}</span><span class="anon">${s.anon}</span></div><span class="vote"></span></div>
+    <div class="model">${s.model}</div>
+    <div class="ev"><div class="think m">thinking…</div><div class="evc">${s.chip ? `<span class="chip ${s.chip[0]}">${s.chip[1]}</span>${s.chip[2]}` : ""}</div>
+      <div class="rated"></div></div>`;
+  seatsEl.appendChild(d);
+  s.el = d;
+}
+const cssv = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+function scene1(t) {
+  const o = win(t, 0, 6.2, 0.3);
+  show($("s1"), o);
+  if (!o) return;
+  $("h1").style.opacity = prog(t, 0.3, 0.6);
+  $("h2").style.opacity = prog(t, 0.8, 1.1);
+  $("h3").style.opacity = prog(t, 1.3, 1.6);
+  $("h4").style.opacity = prog(t, 1.8, 1.9);
+  const q = "Waiting for your input: Postgres or SQLite?";
+  $("h4t").textContent = q.slice(0, Math.round(clamp((t - 1.9) / 1.4) * q.length));
+  $("cur").style.opacity = t < 3.3 || Math.floor(t * 2) % 2 === 0 ? 1 : 0;
+  show($("c1"), prog(t, 3.6, 4.2), 16);
+}
+
+function scene2(t) {
+  const o = win(t, 6.0, 10.6);
+  show($("s2"), o);
+  if (!o) return;
+  $("s2").querySelector(".name").style.transform = `scale(${0.94 + 0.06 * prog(t, 6, 7)})`;
+  show($("s2").querySelector(".sub"), prog(t, 7.0, 7.8), 14);
+  [...$("s2dots").children].forEach((d, i) => show(d, prog(t, 7.8 + i * 0.15, 8.1 + i * 0.15), 10));
+}
+
+function council(t) {
+  const o = win(t, 10.4, 34.4);
+  show($("council"), o);
+  if (!o) return;
+  // captions
+  let top = "The council", bottom = "5 vendors · your CLI subscriptions · no API keys";
+  if (t >= 17) { top = "Round 1 · blind"; bottom = "Every vote must cite a FACT or INFERENCE with a source"; }
+  if (t >= 25) { top = "Round 2 · anonymous cross-exam"; bottom = "Votes change only when evidence forces it"; }
+  const capO = t < 17 ? prog(t, 10.6, 11.2) : t < 25 ? win(t, 17, 25.05, .35) : prog(t, 25, 25.4);
+  $("ctitle").textContent = top; $("cbottom").textContent = bottom;
+  $("ctitle").style.opacity = capO;
+  $("cbottom").style.opacity = t < 17 ? prog(t, 13.4, 14) : capO;
+
+  // table text
+  $("tq").style.opacity = 1 - prog(t, 17, 17.4) * 0 ; // question stays, notes overlay under it
+  $("tq").style.transform = `translateY(${-28 * prog(t, 17, 17.5)}px)`;
+  const n1 = win(t, 17.3, 25), n2 = prog(t, 25.3, 25.8);
+  $("tn1").style.opacity = n1; $("tn1").style.top = "128px";
+  $("tn2").style.opacity = n2; $("tn2").style.top = "128px";
+
+  const anonP = prog(t, 25.4, 26.6);
+  SEATS.forEach((s, i) => {
+    const el = s.el;
+    const appear = prog(t, 11.2 + i * 0.35, 11.6 + i * 0.35);
+    el.style.opacity = appear;
+    el.style.transform = `scale(${0.85 + 0.15 * appear})`;
+    const tint = cssv(s.c);
+    // round 2 hides the vendor: tint fades to grey, name swaps to M-label
+    const hide = s.id === "gemini" ? 0 : anonP;
+    el.querySelector(".sw").style.background = hide > .5 ? cssv("--anon") : tint;
+    el.style.borderColor = hide > .5 ? cssv("--line") : tint + "99";
+    el.querySelector(".real").style.opacity = 1 - hide;
+    el.querySelector(".anon").style.opacity = hide;
+    el.querySelector(".model").style.opacity = 1 - hide;
+
+    // round 1: thinking -> vote + evidence chip
+    const reveal = 18.6 + i * 0.75;
+    const think = el.querySelector(".think"), evc = el.querySelector(".evc"), rated = el.querySelector(".rated");
+    const vote = el.querySelector(".vote");
+    think.style.opacity = t >= 17.4 && t < reveal ? (Math.floor(t * 3) % 3 === 0 ? .55 : 1) : 0;
+    if (s.id === "gemini") {
+      const st = t < reveal ? "" : t < reveal + 1.2 ? '<span class="y">quota</span> → 3.7 flash…' : '<span class="y">quota</span> → <span class="r">UNATTENDED</span>';
+      evc.innerHTML = st; evc.style.opacity = t >= reveal ? 1 : 0;
+      el.style.opacity = t >= reveal + 1.2 ? appear * 0.55 : appear;
+      vote.textContent = "";
+      rated.style.opacity = 0;
+      return;
+    }
+    const r1on = prog(t, reveal, reveal + 0.35);
+    evc.style.opacity = r1on * (1 - prog(t, 27.0, 27.4));
+    // round 2: ratings replace the chip
+    const r = s.rate, full = Math.floor(r), half = r - full >= .5;
+    rated.innerHTML = `peer rating <span class="rate">${"●".repeat(full)}${half ? "◐" : ""}${"○".repeat(2 - full - (half ? 1 : 0))}</span> ${r.toFixed(2)}`;
+    rated.style.opacity = prog(t, 27.4 + i * 0.3, 27.8 + i * 0.3);
+    let v = t >= reveal ? s.r1 : "";
+    const flipAt = 30.6;
+    if (s.r1 !== s.r2 && t >= flipAt) v = s.r2;
+    vote.textContent = v ? "→ " + v : "";
+    vote.style.opacity = r1on;
+    vote.style.color = v === "B" ? cssv("--ok") : v === "A" ? cssv("--opencode") : "";
+    const fl = el.querySelector(".flip");
+    if (s.r1 !== s.r2) {
+      fl.style.opacity = prog(t, flipAt, flipAt + 0.3);
+      el.style.boxShadow = t >= flipAt && t < flipAt + 1.2 ? "0 0 0 4px rgba(63,185,80,.45)" : "none";
+    }
+  });
+}
+
+function tally(t) {
+  const o = win(t, 34.2, 42.4);
+  show($("s6"), o);
+  if (!o) return;
+  const scale = 540 / 5.5;
+  const rows = [
+    { f: "fb", v: "vb", parts: [["--fable", 1.5, "Fable"], ["--opus", 1.25, "Opus"], ["--codex", 1.5, "GPT"], ["--grok", 1.25, "Grok"]], votes: "4 votes" },
+    { f: "fa", v: "va", parts: [["--opencode", 0.88, "OC"]], votes: "1 vote" },
+    { f: "fc", v: "vc", parts: [], votes: "0 votes" },
+  ];
+  rows.forEach((row, i) => {
+    const p = prog(t, 35.2 + i * 0.4, 37.2 + i * 0.4);
+    const total = row.parts.reduce((a, b) => a + b[1], 0);
+    $(row.f).innerHTML = row.parts.map(([c, w, n]) => `<i style="width:${w * scale * p}px;background:var(${c});border-right:2px solid #0d1117">${p > .95 && n ? `<b>${n} ${w.toFixed(2)}</b>` : ""}</i>`).join("");
+    $(row.v).innerHTML = `${(total * p).toFixed(2)}<small>${row.votes}</small>`;
+    $(row.v).style.color = i === 0 && p >= 1 ? cssv("--ok") : "";
+  });
+  $("u1").style.opacity = prog(t, 38.4, 38.9);
+  $("u2").style.opacity = prog(t, 39.4, 39.9);
+}
+
+function verdict(t) {
+  const o = win(t, 42.2, 49.4);
+  show($("s7"), o);
+  if (!o) return;
+  ["v1", "v2", "v3", "v4", "v5", "v6"].forEach((id, i) => {
+    const at = [42.6, 43.4, 44.4, 45.0, 46.0, 46.4][i];
+    $(id).style.opacity = prog(t, at, at + 0.3);
+  });
+  $("v3").style.textShadow = t > 44.4 && t < 45.6 ? "0 0 18px rgba(63,185,80,.8)" : "none";
+  show($("c7"), prog(t, 46.9, 47.5), 14);
+}
+
+function outro(t) {
+  const o = win(t, 49.2, DURATION + 1);
+  show($("s8"), o);
+  if (!o) return;
+  show($("s8").querySelector(".cmd"), prog(t, 49.9, 50.5));
+  show($("s8").querySelector(".gh"), prog(t, 50.8, 51.4), 12);
+  show($("s8").querySelector(".hosts"), prog(t, 51.6, 52.2), 12);
+  show($("s8").querySelector(".dots"), prog(t, 52.2, 52.8));
+}
+
+window.DURATION = DURATION;
+window.seek = function (t) {
+  scene1(t); scene2(t); council(t); tally(t); verdict(t); outro(t);
+};
+
+// fit the 1280x720 stage to the window
+function fit() {
+  const s = Math.min(innerWidth / 1280, innerHeight / 720);
+  const st = $("stage");
+  st.style.transform = `scale(${s})`;
+  st.style.left = (innerWidth - 1280 * s) / 2 + "px";
+  st.style.top = (innerHeight - 720 * s) / 2 + "px";
+}
+addEventListener("resize", fit); fit();
+
+const params = new URLSearchParams(location.search);
+if (params.has("render")) {
+  seek(0);
+} else if (params.has("t")) {
+  seek(parseFloat(params.get("t")));
+} else {
+  const t0 = performance.now();
+  (function loop(now) { seek(((now - t0) / 1000) % DURATION); requestAnimationFrame(loop); })(t0);
+}
+</script>
+</body>
+</html>

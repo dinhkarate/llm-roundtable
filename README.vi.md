@@ -12,6 +12,8 @@
 
 <p align="center"><a href="README.md">English</a> · <a href="docs/research.vi.md">Nghiên cứu</a></p>
 
+<p align="center"><a href="assets/demo.mp4"><img src="assets/demo.gif" alt="Demo llm-roundtable" width="100%"></a></p>
+
 ---
 
 Agent chạy qua đêm (`/loop`, Orca worker, bot CI) hay bị kẹt ở câu *"chọn A hay B?"*, *"plan này ổn chưa?"*,
