@@ -34,16 +34,34 @@
 
 | Round | Members see | Members return |
 |---|---|---|
-| 1 (blind) | brief + options | vote, confidence, summary, evidence[], risks, conditions |
-| 2..3 (cross-exam) | brief + every previous position as M1..Mn, shuffled, own one unmarked | same + ratings{Mi: 0-2}, rebuttals[], decisive_evidence[] |
+| 1 (blind) | brief + options | vote, confidence, summary, evidence[], risks, conditions, kill_criteria[] (optional), restatement, missing_option |
+| 2..3 (cross-exam) | brief + every previous position as M1..Mn, shuffled, own one unmarked; open questions on a line of their own | vote, confidence, summary, evidence[], risks, conditions, kill_criteria[] + ratings{Mi: 0-2}, rebuttals[], decisive_evidence[] |
 
 Default 2 rounds. Each cross-exam round is a new session, so a member does not remember its own
 earlier answer; the anonymity is real, not a request to "please ignore names".
 
 Evidence types: `FACT` (verified, with a source), `INFERENCE` (reasoned from cited facts),
-`ASSUMPTION` (unverified). FACT or INFERENCE items without a source are downgraded to ASSUMPTION.
+`ASSUMPTION` (unverified), `UNKNOWN` (an open question that matters and that the seat could not answer).
+FACT or INFERENCE items without a source are downgraded to ASSUMPTION.
 A ballot needs at least one FACT or INFERENCE item to count
-(`no_evidence` otherwise). A vote that is not one of the option ids is `invalid`.
+(`no_evidence` otherwise; a ballot with only UNKNOWN items is `no_evidence`). A vote that is not one of
+the option ids is `invalid`. UNKNOWN items are kept out of the rated and rendered evidence: the dossier
+lists them as "open questions (UNKNOWN, not evidence)" and the cross-exam prompt says not to treat them as
+evidence when rating; decision.md lists them under "Unresolved questions".
+
+**Kill criteria** (optional, any round): observable signals that would show later that the choice was
+wrong, phrased "If <X> is observed, ...". decision.md lists those of the seats whose final valid ballot
+voted for the verdict ("Kill criteria for V", seat-attributed, at most 20). When the verdict is the
+`--default`, the heading says it is the safe default and not a council choice. Hosts report and watch
+them; the script never acts on them.
+
+**Framing check** (round 1 only): `restatement` (the decision in one sentence; audit only, never
+compared) and `missing_option` (empty, or one concrete action the options left out; not a mix of the
+listed options). Read from the round-1 history after the last round, so round 2 cannot erase it.
+`framing_concern` is true when the seats with a valid round-1 ballot that named a missing option number
+at least `max(2, ceil(n_valid / 2))` (duo: both seats; six: three). It is advisory: the tally, the verdict
+and the `VERDICT:` line are unchanged; decision.md shows a banner and a "Framing check" section, and
+`status` prints `FRAMING: concern (k/n ...)` before `DONE`.
 
 ## Seat lifecycle
 
@@ -75,12 +93,66 @@ score(opt)   = sum of weight over valid ballots for opt
 verdict      = argmax score                               (decision_rule "count": argmax votes, score breaks ties)
 tie          -> option the tiebreak seat (Fable) voted for; Fable not on a tied option -> TIE
 valid ballots < quorum (2) -> NO QUORUM
-TIE / NO QUORUM -> --default (safe option from the brief; review mode: CHANGES), else VERDICT NONE
+share        = score(winner) / sum of score over valid ballots   (unrounded; after the tie-break;
+               weighted under both decision rules; undecided: the top option's share; no valid weight: null)
+--min-margin X (opt-in, also "min_margin" in seats.json): share < X - 1e-9 -> treated like a TIE:
+               tally.council_verdict = the council's pick, tally.narrow_margin = true, no second tie-break
+TIE / NO QUORUM / narrow margin -> --default (safe option from the brief; review mode: CHANGES), else VERDICT NONE
+precedence   : tainted workspace > NO QUORUM > narrow margin > TIE
 ```
+
+`X` is a number or fraction in (0, 1]. The comparison is inclusive: a uniform 4-2 split of six has share
+0.6667, which passes `2/3` and fails `0.67`. A high floor turns the council into "always the default";
+peer ratings move weights between 0.5x and 1.5x, so shares near the floor are noisy. The share is always
+recorded and printed (`Margin:` in decision.md, `MARGIN:` from `status`), with or without the flag.
+
+A whole-run `--deadline SECONDS` (opt-in) starts with the run: each call's timeout is cut to what is
+left, no call (fallback or nudge included) starts after it, a later round is skipped, and the ballots
+so far are tallied (carried ballots included). Seat discovery is not interrupted.
 
 Confidence is recorded but not weighted: self-reported confidence is poorly calibrated and easy to
 inflate. Peer-rated evidence is the weight because that is what the user asked the council to
 argue over.
+
+## Result contract (schema_version 2)
+
+`result.json` and `status --json` carry `schema_version: 2` (v0.1 results have none and read as 1).
+The text contract does not change: a foreground `run` ends with
+`VERDICT: <option|NONE> (council|tiebreak|default|none|workspace_changed)`, and `status` ends with `DONE`
+(or `TAINTED`) and then that line; new lines (`USAGE:`, `MARGIN:`, `FRAMING:`) always come before them.
+
+| result.json | Meaning |
+|---|---|
+| `tally.verdict`, `tally.decided_by` | what to act on, as in the `VERDICT:` line |
+| `tally.council_verdict` | the council's own pick when it is not acted on (tainted run, narrow margin) |
+| `tally.share`, `tally.share_of`, `tally.min_margin`, `tally.narrow_margin` | margin, see Tally |
+| `tally.framing_concern`, `tally.framing` | flag; `flagged`, `valid`, `threshold`, `proposals[]`, `restatements{}` |
+| `conditions[]` | `{seat, condition}` of the seats that voted for the verdict |
+| `kill_criteria_for`, `kill_criteria[]` | `{seat, criterion}`, winning side only, at most 20 |
+| `unresolved_questions[]` | `{seat, vote, question, source}`: UNKNOWN items of every valid final ballot, at most 20 |
+| `usage` | `calls`, `nudges`, `fallback_calls`, `fallback_seats`, `unattended`, `skipped`, `carried`, `rounds_requested`, `rounds_run`, `wall_secs{r1..}`, `total_wall_secs`, `deadline_secs`, `deadline_hit`, `per_seat{calls, nudges, fallback_calls, call_secs}` |
+| `seats.<id>.history[].attempts[]` | one entry per CLI process: `round`, `model`, `level`, `kind` (primary, fallback, nudge), `status`, `detail`, `secs` |
+
+Usage counts are telemetry, computed after the tally and never fed into it. A call is a CLI process
+that was started (the call before a nudge and the nudge are two calls). `wall_secs` is elapsed time per
+round; seats run in parallel, so it is not the sum of call times. No token or cost figures. Round
+timings are stored in meta.json, so `tally` reproduces them, together with `min_margin`.
+
+`status --json` prints `state` (STARTING, RUNNING, DONE, TAINTED, FAILED), `verdict`, `decided_by`,
+`actionable` (DONE with a verdict), `council_verdict`, `share`, `share_of`, `min_margin`, `narrow_margin`,
+`framing_concern`, `framing`, `conditions`, `kill_criteria_for`, `kill_criteria`, `unresolved_questions`,
+`unattended`, `usage` (without `per_seat`) and `decision_md`. Exit codes match plain `status`
+(0, 4 for TAINTED, 1 for FAILED).
+
+`run --dry-run` goes through the same validation as `run` (options, secret scan, `--default`,
+`--min-margin`, `--deadline`, seat ids), resolves seats and prints one JSON object: options, default,
+rounds, `timeout_per_call`, quorum, each seat (`primary`, `fallback`, `fallback_dropped`, `cli_found`,
+`can_sit`, `reason`, `max_calls`), `skipped`, `sitting`, `quorum_ok`, `discovery_ran`, `prompt_bytes_r1`,
+`bounds` and `warnings` (unparsed option lines, seats that cannot sit, NO QUORUM, argv prompts near
+32 KB). It creates no run directory and calls no model; seat discovery does run. Bounds, per seat with
+`n` models over `r` rounds: `max_calls = 2 x (r + n - 1)` (each model call may get one nudge, and the
+level only moves down the chain); `max_wall_secs = rounds run x 2 x max n x timeout`, capped by
+`--deadline`. Both exclude discovery, the workspace snapshot/fingerprint and CLI start-up.
 
 ## Why this shape (short)
 

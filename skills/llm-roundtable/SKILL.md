@@ -54,8 +54,15 @@ change"). It is what happens when the council cannot decide; nobody is there to 
 ```bash
 S=<this skill dir>/scripts/roundtable.py
 python3 $S doctor                 # who can sit (CLI on PATH); add --probe to ping every model
+python3 $S run --brief brief.md --default B --dry-run   # preflight: plan as JSON, no model call
 python3 $S run --brief brief.md   # full council, 2 rounds
 ```
+
+Before a real run, `--dry-run` with the same flags checks the brief and options (unparsed `## Options`
+lines are listed under `warnings`), resolves seats and fallbacks, and prints `sitting`, `quorum_ok` and
+`bounds` (happy-path calls, max calls, max wall seconds). It creates no run directory and calls no model,
+but seat discovery for the OpenCode seat still runs and can take a few minutes. If `quorum_ok` is false,
+fix the seats (or decide with the `--default` yourself) instead of starting the council.
 
 A council takes 5-20 minutes, longer than most tool timeouts. On every host, start it with `--detach`:
 it prints the run directory and returns at once, while the council keeps running in its own session
@@ -63,10 +70,15 @@ it prints the run directory and returns at once, while the council keeps running
 
 ```bash
 RUN=$(python3 $S run --brief brief.md --default B --detach)   # prints the run directory
-python3 $S status "$RUN"   # every 1-2 min: STARTING / RUNNING / DONE / TAINTED / FAILED
+python3 $S status "$RUN"          # every 1-2 min: STARTING / RUNNING / DONE / TAINTED / FAILED
+python3 $S status --json "$RUN"   # the same as one JSON object; read this to act
 ```
 
-When it is finished, `status` ends with the same `VERDICT: ...` line as a foreground run. Runs live in
+When it is finished, `status` ends with `DONE` then the same `VERDICT: ...` line as a foreground run
+(lines such as `USAGE:`, `MARGIN:` and `FRAMING:` come before `DONE`). `status --json` prints `state`,
+`verdict`, `decided_by`, `actionable`, `council_verdict`, `narrow_margin`, `framing_concern`, `conditions`,
+`kill_criteria`, `unresolved_questions`, `unattended` and `usage` (same exit codes as plain `status`).
+Prefer it over parsing text. Runs live in
 `~/.roundtable/runs/` (set `ROUNDTABLE_RUNS` to put them elsewhere); the runner's own output is in
 `$RUN/runner.log`.
 
@@ -83,8 +95,11 @@ there, restore anything a seat touched, and treat the question as undecided.
 
 Useful flags: `--seats duo` (Fable + Opus only), `--seats fable,codex,grok`, `--rounds 1`
 (blind vote, cheapest) or `3`, `--workspace .` (members may read the repo, read-only),
-`--private`, `--timeout 600`, `--option A='...'` instead of an Options section,
-`--default B` (review mode defaults to CHANGES).
+`--private`, `--timeout 600` (per CLI call), `--deadline 1800` (whole run: no call starts after it and
+the ballots so far are tallied), `--option A='...'` instead of an Options section,
+`--default B` (review mode defaults to CHANGES), `--min-margin 2/3` (opt-in: below that share of the
+valid weight the council's pick is recorded but `--default` applies, as on a TIE; 0.67 rejects a 4-2
+split of six, 2/3 accepts it), `--dry-run`.
 Presets: `full`, `duo`, `solo-codex`, `solo-grok`, `solo-agy` (see references/hosts.md).
 
 ## 3. Act on the verdict
@@ -94,11 +109,20 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
 
 - **council / tiebreak / default**: carry out that option, including its "conditions". Do not overrule
   it, re-run until you like the answer, or swap in your own preference.
+- **default after a narrow margin** (`narrow_margin: true`, `--min-margin` was set): carry out the
+  default even though the council preferred `council_verdict`; say so in the trail.
 - **NONE** (no `--default` and no decision, or a TAINTED run): take the most reversible path, usually
   leaving the change undone, and move on to other work.
+- **Kill criteria and unresolved questions** are for watching, not doing: report them in the trail and
+  check them when you touch this area again. Do not carry them out as tasks and do not re-run the council
+  on them. If one is already true, say so in the trail and treat it as a reason for the user to revisit.
+- **Framing concern** (`framing_concern: true`) is advisory: still carry out the VERDICT. You may re-brief
+  at most once, keeping the original options and adding the proposed one only if it is an action you
+  were already allowed to take; record why. Never re-brief in review mode, and never a second time.
 - Leave a trail where the user will look later (PR description, issue comment, commit message, or your
-  final report): the question, the verdict and how it was reached, the 2-3 strongest pieces of evidence,
-  the strongest dissent, and unattended seats (e.g. "gemini UNATTENDED: 3.8 quota, 3.7 not offered").
+  final report): the question, the verdict and how it was reached (and the margin), the 2-3 strongest
+  pieces of evidence, the strongest dissent, the kill criteria, the unresolved questions, a framing
+  concern if any, and unattended seats (e.g. "gemini UNATTENDED: 3.8 quota, 3.7 not offered").
   Link or paste the run directory path.
 - The council replaces the user's *judgment* inside the work the user already handed you, not their
   *authority*. It picks between options; it does not widen what you may do. Actions that need the
@@ -117,13 +141,17 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
   gemini 3.7 flash, next-newest free OpenCode model) on quota / unavailable / error / timeout.
   Still failing, or CLI missing: the seat is **UNATTENDED**.
 - Round 1 blind; round 2+ shows every position anonymized (M1, M2...) and asks for evidence ratings
-  (0-2), rebuttals and a fresh vote. Ballots without sourced FACT/INFERENCE evidence do not count.
+  (0-2), rebuttals and a fresh vote. Ballots without sourced FACT/INFERENCE evidence do not count;
+  `UNKNOWN` items are open questions, never evidence.
+- Round 1 also asks each seat to restate the question and name a missing option, if any. When at least
+  max(2, half rounded up) of the valid seats name one, the run carries a framing concern; the vote is
+  unchanged.
 - Seats are read-only and cannot publish: allowlisted read tools only (claude), kernel sandboxes
   (codex, grok), agy in its own sandbox on a snapshot copy of the workspace, MCP/app tools removed,
   unrelated credentials stripped from their environment. Only a seat's final answer can carry its ballot.
 - Weight = seat weight x (0.5 + 0.5 x mean peer rating, self-ratings ignored). Highest weighted
   score wins; a tie goes to the option the Fable seat voted for, else TIE. Fewer than 2 valid ballots:
-  NO QUORUM. TIE or NO QUORUM falls back to `--default`.
+  NO QUORUM. TIE or NO QUORUM falls back to `--default`, and so does a winner below `--min-margin`.
 - A seat refuses to convene a council itself (`ROUNDTABLE_SEAT` guard).
 
 Details: `references/protocol.md` (rounds, prompts, maths), `references/hosts.md` (per-host setup,

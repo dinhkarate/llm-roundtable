@@ -40,7 +40,9 @@ npx llm-roundtable doctor --probe                                 # ghế nào n
 npx llm-roundtable run --brief brief.md --default C               # brief có mục "## Options" (- A: ..., - B: ...)
 npx llm-roundtable run --brief plan.md --mode review --workspace . # duyệt: APPROVE / CHANGES / REJECT
 npx llm-roundtable run --brief q.md --seats duo                   # chỉ Fable vs Opus
+npx llm-roundtable run --brief brief.md --default C --dry-run     # kiểm tra trước: ghế, quorum, giới hạn số lần gọi/thời gian (JSON), không gọi model
 npx llm-roundtable status                                         # tiến độ lần chạy mới nhất
+npx llm-roundtable status --json <thư-mục-run>                     # trạng thái, phán quyết và các cờ dạng JSON cho agent
 ```
 
 Kết quả ở `~/.roundtable/runs/<thời gian>-<slug>/decision.md` (+ `result.json`, transcript từng vòng).
@@ -54,6 +56,10 @@ chạy nền, theo dõi và làm theo phán quyết. Gọi tay bằng `/llm-roun
 - Fallback xuống đúng một cấp cùng họ (fable 5, opus 5, gpt-6-sol, grok-4.6, gemini 3.7 flash, model free kế tiếp); hết cách thì ghế đó **UNATTENDED**.
 - Trọng số = weight × (0.5 + 0.5 × điểm bằng chứng trung bình do các ghế khác chấm, 0-2). Điểm tự chấm bị bỏ.
 - Hoà → theo phiếu của Fable; Fable không nằm trong nhóm hoà → TIE. Dưới 2 phiếu hợp lệ → NO QUORUM. TIE/NO QUORUM → lấy `--default`.
+- `--min-margin 2/3` (tuỳ chọn): phương án thắng chiếm dưới tỉ lệ đó của tổng trọng số hợp lệ thì coi như hoà và lấy `--default`; lựa chọn của hội đồng vẫn được ghi ở `council_verdict`. `0.67` loại kết quả 4-2 trên sáu ghế, `2/3` thì giữ.
+- `UNKNOWN` là câu hỏi còn bỏ ngỏ, không bao giờ được tính là bằng chứng; `decision.md` liệt kê chúng ở "Unresolved questions", cùng "Kill criteria" (dấu hiệu cần xem lại quyết định) của phía thắng.
+- Vòng 1 mỗi ghế nhắc lại câu hỏi và có thể nêu một phương án bị bỏ sót; từ max(2, nửa số ghế hợp lệ) trở lên thì có cảnh báo "framing concern", chỉ để tham khảo, không đổi phiếu.
+- `decision.md` có mục "Usage": số lần gọi CLI, nudge, fallback, thời gian từng vòng. `--deadline` giới hạn thời gian cả lần chạy.
 - Hội đồng chỉ chọn giữa các việc agent đã được phép làm; không bao giờ cấp quyền push, deploy, xoá dữ liệu hay tiêu tiền.
 
 Chi tiết: [`protocol.md`](skills/llm-roundtable/references/protocol.md), [`hosts.md`](skills/llm-roundtable/references/hosts.md),

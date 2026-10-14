@@ -10,9 +10,14 @@ Every host starts the council with `--detach`, because a council outlives tool t
 kill whatever a tool call started once the call returns (Codex does; `nohup ... &` does not survive it):
 
 ```bash
+python3 $S run --brief brief.md --dry-run         # preflight: seats, quorum, bounds as JSON; nothing is created
 RUN=$(python3 $S run --brief brief.md --detach)   # the run directory; the council continues in its own session
 python3 $S status "$RUN"                          # STARTING / RUNNING / DONE / TAINTED / FAILED, then VERDICT: ...
+python3 $S status --json "$RUN"                   # the same as one JSON object (state, verdict, flags)
 ```
+
+The dry run still resolves the OpenCode seat (`opencode models`, up to a few minutes when its service is
+slow). A bad `--seats` now fails before `--detach`, on the caller's stderr.
 
 | Host | Waiting |
 |---|---|

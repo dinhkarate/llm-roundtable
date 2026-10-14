@@ -11,7 +11,11 @@ Key facts:
 - Each seat falls back one model level in the same family, then is marked UNATTENDED; the council never blocks.
 - Seats are read-only and sandboxed, publishing tools are removed, and the workspace is fingerprinted before and after (a change makes the run TAINTED).
 - Review mode (`--mode review --workspace .`) approves or rejects plans, diffs and pull requests: APPROVE / CHANGES / REJECT.
-- Output: `~/.roundtable/runs/<time>-<slug>/decision.md` and `result.json`; the last line is `VERDICT: <option|NONE> (council|tiebreak|default|none)`.
+- Output: `~/.roundtable/runs/<time>-<slug>/decision.md` and `result.json` (`schema_version` 2); the last line is `VERDICT: <option|NONE> (council|tiebreak|default|none|workspace_changed)`. `status --json` prints state, verdict and flags as JSON for host agents.
+- `run --dry-run` prints the resolved seats, quorum and call/time bounds as JSON without calling a model; `--deadline` caps the whole run.
+- Optional `--min-margin` (e.g. `2/3`): a winner below that share of the valid weight falls back to `--default`, keeping the council's pick as `council_verdict`.
+- Ballots may list `UNKNOWN` open questions (never evidence) and kill criteria; round 1 adds a framing check, and an advisory framing concern is raised when at least half the valid seats (and at least two) name a missing option.
+- decision.md and result.json include usage: CLI calls per seat (nudges and fallbacks included) and wall time per round.
 - Typical run: about 12 model calls, 5-20 minutes.
 
 ## Docs

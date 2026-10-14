@@ -9,13 +9,16 @@ reports the verdict; it never votes.
 Subcommands:
   run     convene the council on a brief and write decision.md + result.json
   doctor  show which seats can sit (CLI found, resolved models); --probe pings each model
-  status  show progress of a run (for hosts that ran `run` in the background)
+  status  show progress of a run (for hosts that ran `run` in the background); --json for hosts
   tally   recompute the verdict from a finished run directory
+
+`run --dry-run` resolves seats, models and options and prints the plan as JSON without calling a model.
 
 Python 3.9+, stdlib only.
 """
 import argparse
 import atexit
+import math
 import concurrent.futures as cf
 import datetime as dt
 import json
@@ -69,11 +72,24 @@ REVIEW_OPTIONS = [
     ("REJECT", "Reject"),
 ]
 FALLBACK_STATUSES = {"quota", "unavailable", "error", "timeout"}
-EVIDENCE_TYPES = {"FACT", "INFERENCE"}
+EVIDENCE_TYPES = {"FACT", "INFERENCE"}  # the only types that make a ballot count; UNKNOWN never does
+OPEN_QUESTION = "UNKNOWN"  # an evidence item that is an open question: shown apart, never rated or counted
+SCHEMA_VERSION = 2  # result.json and `status --json`; v0.1 results have no schema_version (= 1)
+NUDGES = 1  # retries per model call that ended without a usable ballot (dry-run bounds use the same constant)
+ARGV_PROMPT_LIMIT = 30000  # bytes; prompts passed on argv hit the 32 KB Windows command-line limit
 
 _log_lock = threading.Lock()
 _live = set()  # Popen objects of running seats, reaped on exit/signal
 _stopping = threading.Event()  # set on SIGINT/SIGTERM: no new calls, no fallbacks
+_deadline_at = None  # wall-clock end of the whole run (run --deadline); None = no limit
+_deadline_hit = threading.Event()  # a call was cut or skipped because of the run deadline
+
+
+def _budget(timeout):
+    """Seconds a new CLI call may take: the per-call timeout, cut to what is left of the run deadline (<= 0: none)."""
+    if _deadline_at is None:
+        return timeout
+    return min(timeout, int(_deadline_at - time.time()))
 
 
 def _kill_tree(p):
@@ -182,21 +198,29 @@ def opencode_free_models(exclude):
     return [full for _, full in rows]
 
 
-def resolve_seats(cfg, names, private=False):
-    """Expand the requested seat ids into concrete seats with a model chain of length <= 2."""
+def seat_order(cfg, names):
+    """Requested seat ids with presets expanded, in order, without duplicates. Unknown ids exit: cheap, no discovery,
+    so `run --detach` can fail on the caller's stderr instead of in runner.log."""
     wanted = []
     for n in names:
         wanted.extend(cfg["presets"].get(n, [n]))
     seen, order = set(), []
+    by_id = {s["id"]: s for s in cfg["seats"]}
     for n in wanted:
+        if n not in by_id:
+            raise SystemExit("unknown seat or preset: %s (known: %s)" % (n, ", ".join(list(by_id) + list(cfg["presets"]))))
         if n not in seen:
             seen.add(n)
             order.append(n)
+    return order
+
+
+def resolve_seats(cfg, names, private=False):
+    """Expand the requested seat ids into concrete seats with a model chain of length <= 2."""
+    order = seat_order(cfg, names)
     by_id = {s["id"]: s for s in cfg["seats"]}
     seats, skipped = [], []
     for sid in order:
-        if sid not in by_id:
-            raise SystemExit("unknown seat or preset: %s (known: %s)" % (sid, ", ".join(list(by_id) + list(cfg["presets"]))))
         s = dict(by_id[sid])
         if private and s.get("may_train"):
             skipped.append({"id": sid, "reason": "skipped by --private (provider may train on prompts)"})
@@ -209,6 +233,7 @@ def resolve_seats(cfg, names, private=False):
                 seat = dict(s)
                 seat["id"] = sid if count == 1 else "%s-%d" % (sid, i + 1)
                 seat["models"] = [m for m in (cands[i:i + 1] + cands[i + count:i + count + 1])]
+                seat["discovered"] = True  # models came from `opencode models` (+ models.dev), not from the config
                 if not seat["models"]:
                     seat["unresolved"] = "no free opencode model found"
                 seats.append(seat)
@@ -347,6 +372,19 @@ def _num(x, default):
     return v if v == v and v not in (float("inf"), float("-inf")) else default
 
 
+EMPTY_ANSWERS = {"", "none", "n/a", "na", "no", "-", "null", "nothing", "false"}
+
+
+def _text(x, limit=1000):
+    """A free-text field: strings kept, lists joined, booleans/None/'none' are empty."""
+    if x is None or isinstance(x, bool):
+        return ""
+    if isinstance(x, list):
+        x = "; ".join(str(i) for i in x if i not in (None, ""))
+    x = str(x).strip()
+    return "" if x.lower() in EMPTY_ANSWERS else x[:limit]
+
+
 def normalize_ballot(obj, option_ids):
     """Coerce whatever the model returned into a ballot; malformed fields are dropped, never raised."""
     vote = str(obj.get("vote", "")).strip().upper()
@@ -379,6 +417,11 @@ def normalize_ballot(obj, option_ids):
         "rebuttals": [r for r in _list(obj.get("rebuttals")) if isinstance(r, dict)],
         "ratings": ratings,
         "decisive_evidence": [str(x) for x in _list(obj.get("decisive_evidence"))],
+        # observable triggers to reconsider the choice later; reported, never acted on by the script
+        "kill_criteria": [t for t in (_text(x, 500) for x in _list(obj.get("kill_criteria"))) if t],
+        # round-1 framing check: audit-only restatement, and an action the options left out (normally empty)
+        "restatement": _text(obj.get("restatement")),
+        "missing_option": _text(obj.get("missing_option"), 500),
     }
 
 
@@ -430,24 +473,46 @@ def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, sta
         detail = seat.get("unresolved") or "no adapter %s" % seat["adapter"]
         log(run_dir, "r%d %-10s %-24s %-11s %s" % (rnd, seat["id"], "-", "unattended", detail))
         return {"status": "unattended", "detail": detail, "attempts": attempts}
+    def record(res, model, level, kind):
+        # one entry per CLI process (secs is None when none was started), so usage can count every call
+        attempts.append({"round": rnd, "model": model, "level": level, "kind": kind, "status": res.get("status"),
+                         "detail": res.get("detail"), "secs": res.get("secs")})
+
+    def ask(model, text, sub):
+        budget = _budget(timeout)
+        res = classify(call_cli(adapter, model, text, rnd_dir / seat["id"] / sub, cwd, budget, seat["id"]), option_ids)
+        if res["status"] == "timeout" and budget < timeout:
+            _deadline_hit.set()
+            res["detail"] += " (run deadline)"
+        return res
+
+    deadline_note = ""
     for i, model in enumerate(seat["models"]):
         if i < start_at:
             continue
-        res = call_cli(adapter, model, prompt, rnd_dir / seat["id"] / str(i), cwd, timeout, seat["id"])
-        res = classify(res, option_ids)
-        if res["status"] == "invalid":
+        kind = "primary" if i == 0 else "fallback"
+        if _budget(timeout) <= 0:
+            _deadline_hit.set()
+            deadline_note = "run deadline reached"
+            log(run_dir, "r%d %-10s %-24s %-11s %s" % (rnd, seat["id"], model, "deadline", "not called: run deadline reached"))
+            break
+        res = ask(model, prompt, str(i))
+        for _ in range(NUDGES):
+            if res["status"] != "invalid" or _budget(timeout) <= 0:
+                break
             # agent CLIs sometimes end the turn early (a tool was denied, it only announced a plan) or emit
             # broken JSON: one nudge, same model, not counted as a fallback
             log(run_dir, "r%d %-10s %-24s %-11s %ss retrying once: %s" % (rnd, seat["id"], model, "invalid", res.get("secs"), res.get("detail", "")[:120]))
+            record(res, model, i, kind)  # the call before the nudge is a call too
             nudge = (prompt + "\n\nIMPORTANT: a previous attempt ended without a usable JSON ballot (%s; it ended with: %r). "
                      "If a tool or command is not permitted, continue without it. Do not stop until you have "
                      "printed the fenced JSON block: valid JSON, with \"vote\" exactly one of %s."
                      % (res.get("detail", ""), res["text"].strip()[-300:], ", ".join(option_ids)))
-            res = classify(call_cli(adapter, model, nudge, rnd_dir / seat["id"] / ("%d-retry" % i), cwd, timeout, seat["id"]), option_ids)
+            res, kind = ask(model, nudge, "%d-retry" % i), "nudge"
         res["model"], res["level"] = model, i
         if res["status"] == "unavailable" and "deprecated" in res.get("detail", "").lower():
             remember_dead(model)
-        attempts.append({k: res.get(k) for k in ("model", "status", "detail", "secs")})
+        record(res, model, i, kind)
         log(run_dir, "r%d %-10s %-24s %-11s %ss %s" % (rnd, seat["id"], model, res["status"], res.get("secs", "-"),
                                                        res.get("detail", "") if res["status"] != "ok" else ""))
         if res["status"] in ("missing", "stopped") or _stopping.is_set():
@@ -455,8 +520,8 @@ def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, sta
         if res["status"] not in FALLBACK_STATUSES:
             res["attempts"] = attempts
             return res
-    last = attempts[-1] if attempts else {}
-    return {"status": "unattended", "detail": "; ".join("%s: %s" % (a["model"], a["status"]) for a in attempts) or last.get("detail", ""),
+    detail = "; ".join("%s: %s" % (a["model"], a["status"]) for a in attempts)
+    return {"status": "unattended", "detail": "; ".join(x for x in (detail, deadline_note) if x) or "no model answered",
             "attempts": attempts}
 
 
@@ -464,17 +529,20 @@ def _sit(seat, cfg, prompt, rnd_dir, cwd, timeout, option_ids, run_dir, rnd, sta
 
 BALLOT_SCHEMA_R1 = """```json
 {"vote": "<option id>", "confidence": 0.0, "summary": "<2-4 sentences: why>",
- "evidence": [{"type": "FACT|INFERENCE|ASSUMPTION", "claim": "<what>", "source": "<file:line, command, URL, doc>"}],
- "risks": ["<risk of your choice>"], "conditions": ["<what must hold for your choice to stay right>"]}
+ "restatement": "<the decision being asked, in one sentence of your own words>",
+ "missing_option": "<empty, or one concrete action the options should have offered>",
+ "evidence": [{"type": "FACT|INFERENCE|ASSUMPTION|UNKNOWN", "claim": "<what>", "source": "<file:line, command, URL, doc>"}],
+ "risks": ["<risk of your choice>"], "conditions": ["<what must hold for your choice to stay right>"],
+ "kill_criteria": ["If <observable signal> is observed, reconsider this choice"]}
 ```"""
 
 BALLOT_SCHEMA_RX = """```json
 {"vote": "<option id>", "confidence": 0.0, "summary": "<2-4 sentences: why, after cross-examination>",
- "evidence": [{"type": "FACT|INFERENCE|ASSUMPTION", "claim": "<what>", "source": "<file:line, command, URL, doc>"}],
+ "evidence": [{"type": "FACT|INFERENCE|ASSUMPTION|UNKNOWN", "claim": "<what>", "source": "<file:line, command, URL, doc>"}],
  "rebuttals": [{"member": "M2", "point": "<the flaw or counter-evidence>", "source": "<where>"}],
  "ratings": {"M1": 2, "M2": 0},
  "decisive_evidence": ["<member + claim that decided your vote>"],
- "risks": ["..."], "conditions": ["..."]}
+ "risks": ["..."], "conditions": ["..."], "kill_criteria": ["If <observable signal> is observed, ..."]}
 ```"""
 
 
@@ -500,9 +568,15 @@ Rules
 - {access_note(workspace)}
 - Gather evidence BEFORE concluding. Label every item:
   FACT = verified, with a concrete source (file:line, command output, URL + quote, official doc, benchmark, known incident);
-  INFERENCE = reasoned from facts you cite; ASSUMPTION = unverified belief.
+  INFERENCE = reasoned from facts you cite; ASSUMPTION = unverified belief;
+  UNKNOWN = an open question that matters to this decision and that you could not answer (it is never evidence).
   A ballot without at least one FACT or INFERENCE item is discarded.
 - Choose exactly one option id. If none is fully acceptable, choose the least bad and put what must change in "conditions".
+- "kill_criteria" (optional): observable signals that would show later that your choice was wrong,
+  each phrased "If <X> is observed, ...". They are reported for someone to watch; they are not tasks.
+- Framing check: in "restatement", say in one sentence what decision is being asked. Leave "missing_option"
+  empty unless the options leave out one concrete action the brief should have offered; never put a mix or
+  compromise of the listed options there. Your vote must still be one of the listed option ids.
 - Prefer being right over being agreeable. Write prose in the language of the brief.
 
 === BRIEF ===
@@ -522,14 +596,26 @@ def redact(text):
     return text
 
 
+def evidence_items(ballot):
+    """Evidence that can be rated and rendered: open questions (UNKNOWN) never displace it from a slice."""
+    return [e for e in ballot.get("evidence") or [] if e.get("type") != OPEN_QUESTION]
+
+
+def open_questions(ballot):
+    return [e for e in ballot.get("evidence") or [] if e.get("type") == OPEN_QUESTION]
+
+
 def dossier(positions):
     parts = []
     for label, b in positions:
         ev = "\n".join("    - [%s] %s (source: %s)" % (e["type"], e["claim"][:500], e["source"][:200] or "none")
-                       for e in b["evidence"][:12]) or "    - (none)"
+                       for e in evidence_items(b)[:12]) or "    - (none)"
         extra = ""
+        opens = open_questions(b)
+        if opens:
+            extra += "\n  open questions (UNKNOWN, not evidence): " + "; ".join(q["claim"][:200] for q in opens[:5])
         if b.get("rebuttals"):
-            extra = "\n  rebuttals:\n" + "\n".join("    - vs %s: %s" % (r.get("member", "?"), str(r.get("point", ""))[:400])
+            extra += "\n  rebuttals:\n" + "\n".join("    - vs %s: %s" % (r.get("member", "?"), str(r.get("point", ""))[:400])
                                                     for r in b["rebuttals"][:6])
         parts.append("%s voted %s (confidence %.2f)\n  summary: %s\n  evidence:\n%s%s"
                      % (label, b["vote"], b["confidence"], b["summary"][:1200], ev, extra))
@@ -547,6 +633,7 @@ Rules
 - {access_note(workspace)}
 - For each member, check the evidence (verify what you can) and rate it in "ratings":
   0 = unsupported or wrong, 1 = plausible but thin or unverified, 2 = specific and verified.
+  "Open questions" are UNKNOWN items, not verified evidence: do not treat them as evidence when rating.
 - For every position you disagree with, give the strongest concrete flaw or counter-evidence in "rebuttals".
 - Then vote again. Vote counts and confidence are NOT evidence: do not follow the majority. Switch only when a
   specific evidence item compels it, and name it in "decisive_evidence".
@@ -604,9 +691,13 @@ def tally(seats_state, options, decision_rule="weighted"):
             tiebreak = "tie between %s broken by %s" % ("/".join(tied), breakers[0])
         else:
             verdict, tiebreak = None, "tie between %s; no tie-break seat voted for one of them" % "/".join(tied)
+    # margin: the winner's (or, undecided, the top option's) share of all valid weight, from unrounded sums.
+    # Weighted under both decision rules, so it matches the printed "weighted X of Y".
+    total = sum(score.values())
+    share_of = (verdict or top) if total > 0 else None
     return {"verdict": verdict, "tie": len(tied) > 1, "tiebreak": tiebreak, "valid_votes": n_valid,
             "score": {o: round(score[o], 3) for o in option_ids}, "count": count, "voters": voters, "rows": rows,
-            "total_weight": round(sum(score.values()), 3)}
+            "total_weight": round(total, 3), "share_of": share_of, "share": score[share_of] / total if share_of else None}
 
 
 # ---------------------------------------------------------------- run
@@ -614,6 +705,18 @@ def tally(seats_state, options, decision_rule="weighted"):
 def slugify(s):
     s = re.sub(r"[^A-Za-z0-9]+", "-", s.lower()).strip("-")
     return s[:40] or "decision"
+
+
+OPTIONS_SECTION_RE = re.compile(r"^#+\s*Options\s*$(.*?)(?=^#+\s|\Z)", re.M | re.S | re.I)
+OPTION_LINE_RE = re.compile(r"^\s*[-*]\s*\**([A-Za-z0-9_]+)\**\s*[:.)\-–]\s*(.+)$")
+
+
+def unparsed_option_lines(args, brief):
+    """Non-blank lines of the brief's Options section that did not become an option (parse_options drops them)."""
+    m = OPTIONS_SECTION_RE.search(brief)
+    if args.option or not m:
+        return []
+    return [l.strip() for l in m.group(1).splitlines() if l.strip() and not OPTION_LINE_RE.match(l)]
 
 
 def parse_options(args, brief):
@@ -624,10 +727,10 @@ def parse_options(args, brief):
         k, v = o.split("=", 1)
         opts.append((k.strip().upper(), v.strip()))
     if not opts:
-        m = re.search(r"^#+\s*Options\s*$(.*?)(?=^#+\s|\Z)", brief, re.M | re.S | re.I)
+        m = OPTIONS_SECTION_RE.search(brief)
         if m:
             for line in m.group(1).splitlines():
-                mm = re.match(r"^\s*[-*]\s*\**([A-Za-z0-9_]+)\**\s*[:.)\-–]\s*(.+)$", line)
+                mm = OPTION_LINE_RE.match(line)
                 if mm:
                     opts.append((mm.group(1).upper(), mm.group(2).strip()))
     if not opts and args.mode == "review":
@@ -635,6 +738,31 @@ def parse_options(args, brief):
     if len(opts) < 2:
         raise SystemExit("need at least 2 options: add a '## Options' section (- A: ...) to the brief or pass --option A='...'")
     return opts
+
+
+def parse_share(x):
+    """--min-margin / seats.json min_margin: a number or fraction in (0, 1], e.g. 0.6 or 2/3. None = off."""
+    if x is None or x == "":
+        return None
+    try:
+        if isinstance(x, str) and "/" in x:
+            num, den = x.split("/", 1)
+            v = float(num) / float(den)
+        elif isinstance(x, bool):
+            raise ValueError
+        else:
+            v = float(x)
+    except (ValueError, TypeError, ZeroDivisionError):
+        v = None
+    if v is None or not (0 < v <= 1):  # also rejects nan and inf
+        raise SystemExit("min-margin must be a number or fraction in (0, 1], e.g. 0.6 or 2/3 (got %r)" % (x,))
+    return v
+
+
+def seat_max_calls(n_models, rounds):
+    """Upper bound of CLI calls for one seat, mirroring _sit: each model call may get NUDGES retries; the model
+    level only moves down the chain and later rounds start where the last one ended."""
+    return (1 + NUDGES) * (rounds + n_models - 1) if n_models else 0
 
 
 def secret_scan(text):
@@ -663,10 +791,8 @@ def detach(run_dir):
     os.dup2(out, 2)
 
 
-def cmd_run(args):
-    if os.environ.get("ROUNDTABLE_SEAT"):
-        raise SystemExit("refusing to convene a council from inside a council seat (ROUNDTABLE_SEAT=%s)" % os.environ["ROUNDTABLE_SEAT"])
-    cfg = load_config(args.config)
+def plan_inputs(args, cfg):
+    """Everything `run` checks before it touches the disk; `run --dry-run` goes through the same path."""
     brief = Path(args.brief).read_text(encoding="utf-8") if args.brief != "-" else sys.stdin.read()
     options = parse_options(args, brief)
     option_ids = [o for o, _ in options]
@@ -677,9 +803,88 @@ def cmd_run(args):
     default = (args.default or ("CHANGES" if args.mode == "review" else "")).strip().upper() or None
     if default and default not in option_ids:
         raise SystemExit("--default %s is not one of the options %s" % (default, ",".join(option_ids)))
-    rounds = max(1, min(3, args.rounds or cfg.get("rounds", 2)))
-    timeout = args.timeout or cfg.get("timeout", 900)
-    title = args.title or (brief.strip().splitlines() or ["decision"])[0].lstrip("# ").strip()
+    if args.deadline is not None and args.deadline <= 0:
+        raise SystemExit("--deadline must be a positive number of seconds")
+    names = (args.seats or "full").split(",")
+    seat_order(cfg, names)  # unknown seat ids fail here, before a run directory exists
+    return {"brief": brief, "options": options, "option_ids": option_ids, "default": default, "names": names,
+            "rounds": max(1, min(3, args.rounds or cfg.get("rounds", 2))),
+            "timeout": args.timeout or cfg.get("timeout", 900),
+            "min_margin": parse_share(args.min_margin if args.min_margin is not None else cfg.get("min_margin")),
+            "deadline": args.deadline,
+            "title": args.title or (brief.strip().splitlines() or ["decision"])[0].lstrip("# ").strip(),
+            "warnings": ["Options line not parsed (dropped): %r" % l for l in unparsed_option_lines(args, brief)]}
+
+
+def dry_run(args, cfg, plan):
+    """Print what `run` would do as JSON. Creates nothing: no run directory, no seat call, no tally.
+    Seat discovery (auto:opencode-free) does run, as in a real run, and may refresh its models.dev cache."""
+    seats, skipped = resolve_seats(cfg, plan["names"], private=args.private)
+    rounds, timeout = plan["rounds"], plan["timeout"]
+    workspace = Path(args.workspace).resolve() if args.workspace else None
+    prompt_bytes = len(prompt_round1(plan["brief"], plan["options"], workspace, len(seats)).encode("utf-8"))
+    warnings = list(plan["warnings"])
+    rows = []
+    for s in seats:
+        adapter = cfg["adapters"].get(s["adapter"])
+        found = bool(adapter and shutil.which(adapter["bin"]))
+        reason = (s.get("unresolved") or (None if adapter else "no adapter %s" % s["adapter"])
+                  or (None if found else "%s not on PATH" % adapter["bin"]))
+        argv_prompt = bool(adapter) and any("{prompt}" in a for a in adapter.get("argv", []))
+        rows.append({"id": s["id"], "adapter": s["adapter"], "cli": adapter["bin"] if adapter else None, "cli_found": found,
+                     "primary": (s["models"] or [None])[0], "fallback": s["models"][1] if len(s["models"]) > 1 else None,
+                     "fallback_dropped": s.get("fallback_dropped"), "discovered": bool(s.get("discovered")),
+                     "weight": s.get("weight", 1.0), "tiebreak": bool(s.get("tiebreak")), "can_sit": reason is None,
+                     "reason": reason, "prompt_on_argv": argv_prompt,
+                     "max_calls": seat_max_calls(len(s["models"]), rounds) if reason is None else 0})
+        if reason:
+            warnings.append("%s cannot sit: %s (it will be UNATTENDED)" % (s["id"], reason))
+        if reason is None and argv_prompt and prompt_bytes > ARGV_PROMPT_LIMIT:
+            warnings.append("%s gets the prompt on argv and the round-1 prompt is %d bytes (cross-exam prompts are "
+                            "larger); Windows limits a command line to 32 KB" % (s["id"], prompt_bytes))
+    sitting = [r for r in rows if r["can_sit"]]
+    quorum = cfg.get("quorum", 2)
+    if len(sitting) < quorum:
+        warnings.append("NO QUORUM: only %d seat(s) can sit, quorum is %d; the run would end on --default or NONE"
+                        % (len(sitting), quorum))
+    rounds_run = rounds if len(sitting) >= 2 else 1  # a cross-exam needs two positions
+    max_models = max([len(s["models"]) for s, r in zip(seats, rows) if r["can_sit"]] or [0])
+    max_wall = rounds_run * (1 + NUDGES) * max_models * timeout
+    if plan["deadline"]:
+        max_wall = min(max_wall, plan["deadline"])
+    out = {"schema_version": SCHEMA_VERSION, "dry_run": True, "title": plan["title"], "mode": args.mode,
+           "options": [list(o) for o in plan["options"]], "default": plan["default"], "rounds": rounds,
+           "timeout_per_call": timeout, "deadline": plan["deadline"], "quorum": quorum,
+           "decision_rule": cfg.get("decision_rule", "weighted"), "min_margin": plan["min_margin"],
+           "private": bool(args.private), "workspace": str(workspace) if workspace else None,
+           "seats": rows, "skipped": skipped, "sitting": len(sitting), "quorum_ok": len(sitting) >= quorum,
+           "discovery_ran": any(r["discovered"] for r in rows),
+           "prompt_bytes_r1": prompt_bytes,
+           "bounds": {"happy_path_calls": len(sitting) * rounds_run,
+                      "max_calls": sum(r["max_calls"] for r in sitting),
+                      "max_wall_secs": max_wall,
+                      "note": "bounds, not estimates. happy path = one call per sitting seat per round; max = every "
+                              "call fails over (nudge, then fallback); wall = rounds x worst calls per seat x "
+                              "timeout (seats run in parallel), capped by --deadline. Excludes seat discovery "
+                              "(opencode: up to ~6 min), workspace snapshot/fingerprint and CLI start-up."},
+           "warnings": warnings}
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_run(args):
+    global _deadline_at
+    if os.environ.get("ROUNDTABLE_SEAT"):
+        raise SystemExit("refusing to convene a council from inside a council seat (ROUNDTABLE_SEAT=%s)" % os.environ["ROUNDTABLE_SEAT"])
+    t_run = time.time()
+    cfg = load_config(args.config)
+    plan = plan_inputs(args, cfg)
+    if args.dry_run:
+        return dry_run(args, cfg, plan)
+    brief, options, option_ids, default = plan["brief"], plan["options"], plan["option_ids"], plan["default"]
+    rounds, timeout, title = plan["rounds"], plan["timeout"], plan["title"]
+    if plan["deadline"]:
+        _deadline_at = t_run + plan["deadline"]
     run_dir = Path(args.out).resolve() if args.out else RUNS_DIR / ("%s-%s" % (dt.datetime.now().strftime("%Y%m%d-%H%M%S"), slugify(title)))
     run_dir.mkdir(parents=True, exist_ok=True)
     started = dt.datetime.now().isoformat(timespec="seconds")
@@ -696,14 +901,18 @@ def cmd_run(args):
         # keep a laptop from idle-sleeping mid-council (closing the lid on battery still sleeps)
         subprocess.Popen(["caffeinate", "-i", "-s", "-w", str(os.getpid())], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     atexit.register(reap_all)
-    seats, skipped = resolve_seats(cfg, (args.seats or "full").split(","), private=args.private)
+    seats, skipped = resolve_seats(cfg, plan["names"], private=args.private)
     workspace = Path(args.workspace).resolve() if args.workspace else None
     meta = {"title": title, "options": options, "rounds": rounds, "timeout": timeout, "mode": args.mode,
             "workspace": str(workspace) if workspace else None, "private": args.private,
             "decision_rule": cfg.get("decision_rule", "weighted"), "quorum": cfg.get("quorum", 2), "default": default,
+            "min_margin": plan["min_margin"], "deadline": plan["deadline"],
             "seats": seats, "skipped": skipped, "started": started, "pid": os.getpid()}
     (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
     log(run_dir, "council: %s | options %s | rounds %d" % (", ".join(s["id"] for s in seats), ",".join(option_ids), rounds))
+    for w in plan["warnings"]:
+        log(run_dir, "warning: " + w)
+    timing = {"rounds": {}, "rounds_run": 0}  # wall seconds per round; persisted so `tally` keeps them
 
     # seat working dirs live outside run_dir so a seat cannot read the label map or other seats' transcripts
     scratch = Path(tempfile.mkdtemp(prefix="roundtable-"))
@@ -737,6 +946,7 @@ def cmd_run(args):
 
     # round 1: independent
     p1 = prompt_round1(brief, options, workspace, len(seats))
+    t_round = time.time()
     with cf.ThreadPoolExecutor(max_workers=max(1, len(seats))) as ex:
         futs = {ex.submit(sit, s, cfg, p1, io_dir / "r1", seat_cwd(s), timeout, option_ids, run_dir, 1): s for s in seats}
         for f in cf.as_completed(futs):
@@ -746,6 +956,7 @@ def cmd_run(args):
             st["history"].append(slim(res))
             st["status"], st["ballot"], st["model"] = res["status"], res.get("ballot"), res.get("model")
             st["level"] = res.get("level", 0)
+    timing["rounds"]["r1"], timing["rounds_run"] = round(time.time() - t_round, 1), 1
     publish_round("r1")
 
     # cross-examination rounds
@@ -756,6 +967,11 @@ def cmd_run(args):
         if len(speaking) < 2:
             log(run_dir, "r%d skipped: fewer than 2 positions to cross-examine" % rnd)
             break
+        if _budget(1) <= 0:
+            _deadline_hit.set()
+            log(run_dir, "r%d skipped: run deadline reached; tallying the ballots so far" % rnd)
+            break
+        t_round = time.time()
         rng = random.Random(args.seed if args.seed is not None else time.time())
         rng.shuffle(speaking)
         labels = {sid: "M%d" % (i + 1) for i, sid in enumerate(speaking)}
@@ -772,6 +988,7 @@ def cmd_run(args):
                               run_dir, rnd, state[s["id"]]["level"]): s for s in active}
             for f in cf.as_completed(futs):
                 results[futs[f]["id"]] = f.result()
+        timing["rounds"]["r%d" % rnd], timing["rounds_run"] = round(time.time() - t_round, 1), rnd
         # written only after the round, so no seat could read it while voting
         publish_round("r%d" % rnd)
         (run_dir / ("r%d_labels.json" % rnd)).write_text(encoding="utf-8", data=json.dumps(labels, indent=2))
@@ -806,8 +1023,11 @@ def cmd_run(args):
 
     if fp_before is not None and workspace_fingerprint(workspace) != fp_before:
         meta["workspace_changed"] = True
-        (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
         log(run_dir, "WARNING: the workspace changed during the council (git status/diff differ); a seat may have written files")
+    timing["total_secs"] = round(time.time() - t_run, 1)
+    timing["deadline_hit"] = _deadline_hit.is_set()
+    meta["timing"] = timing
+    (run_dir / "meta.json").write_text(encoding="utf-8", data=json.dumps(meta, indent=2, ensure_ascii=False))
     finish(run_dir, meta, state, options, cfg)
     return 3 if meta.get("workspace_changed") else 0
 
@@ -883,33 +1103,149 @@ def slim(res):
     return {k: res.get(k) for k in ("status", "model", "level", "detail", "secs", "ballot", "attempts")}
 
 
-def finish(run_dir, meta, state, options, cfg):
+def framing_check(seats_state):
+    """Round-1 framing check, read from history[0] (round 2 overwrites the ballot). Advisory: never moves the vote."""
+    proposals, restatements, valid = [], {}, 0
+    for sid, st in seats_state.items():
+        h = (st.get("history") or [{}])[0] or {}
+        b = h.get("ballot") or {}
+        if h.get("status") != "ok":
+            continue
+        valid += 1
+        if b.get("restatement"):
+            restatements[sid] = b["restatement"]
+        if b.get("missing_option"):
+            proposals.append({"seat": sid, "vote": b.get("vote"), "option": b["missing_option"]})
+    threshold = max(2, int(math.ceil(valid / 2.0)))
+    return {"concern": valid > 0 and len(proposals) >= threshold, "flagged": len(proposals), "valid": valid,
+            "threshold": threshold, "proposals": proposals, "restatements": restatements}
+
+
+def compute_usage(meta, seats_state):
+    """Usage telemetry, computed after the tally and never fed into it. calls = CLI processes started (the call
+    before a nudge and the nudge are two calls); call_secs adds up one seat's calls; wall_secs is elapsed time per
+    round (seats run in parallel, so it is not the sum of call times). No token or cost figures."""
+    per_seat = {}
+    for sid, st in seats_state.items():
+        row = {"calls": 0, "nudges": 0, "fallback_calls": 0, "call_secs": 0.0}
+        for h in st.get("history") or []:
+            for a in h.get("attempts") or []:
+                if a.get("secs") is None:
+                    continue  # no process was started (CLI missing, stopped, run deadline)
+                row["calls"] += 1
+                row["call_secs"] += a["secs"]
+                row["nudges"] += a.get("kind") == "nudge"
+                row["fallback_calls"] += (a.get("level") or 0) > 0
+        row["call_secs"] = round(row["call_secs"], 1)
+        per_seat[sid] = row
+    timing = meta.get("timing") or {}
+    return {"calls": sum(r["calls"] for r in per_seat.values()),
+            "nudges": sum(r["nudges"] for r in per_seat.values()),
+            "fallback_calls": sum(r["fallback_calls"] for r in per_seat.values()),
+            "fallback_seats": [sid for sid, st in seats_state.items() if st.get("level") and st.get("status") != "unattended"],
+            "unattended": [sid for sid, st in seats_state.items() if st.get("status") == "unattended"],
+            "skipped": [x["id"] for x in meta.get("skipped") or []],
+            "carried": [sid for sid, st in seats_state.items() if st.get("carried")],
+            "rounds_requested": meta.get("rounds"),
+            "rounds_run": timing.get("rounds_run", max([len(st.get("history") or []) for st in seats_state.values()] or [0])),
+            "wall_secs": timing.get("rounds") or {},
+            "total_wall_secs": timing.get("total_secs"),
+            "deadline_secs": meta.get("deadline"),
+            "deadline_hit": bool(timing.get("deadline_hit")),
+            "per_seat": per_seat}
+
+
+def build_result(meta, state, options):
+    """The whole result.json, computed from the seats' ballots; pure, so `tally` replays it exactly."""
     t = tally(state, options, meta.get("decision_rule", "weighted"))
     quorum = meta.get("quorum", 2)
     if t["valid_votes"] < quorum:
         t["verdict"], t["no_quorum"] = None, True
     t["decided_by"] = "none"
+    t["min_margin"], t["narrow_margin"] = meta.get("min_margin"), False
+    # precedence: tainted workspace > no quorum (above) > narrow margin > tie; the last three fall back to --default
     if meta.get("workspace_changed"):
         # a seat may have tampered with what it was judging: nothing about this run is actionable
         t["council_verdict"], t["verdict"], t["decided_by"] = t["verdict"], None, "workspace_changed"
-    elif t["verdict"]:
-        t["decided_by"] = "tiebreak" if t["tiebreak"] else "council"
-    elif meta.get("default"):
-        # nobody is there to ask: a council that cannot decide falls back to the brief's safe option
-        t["verdict"], t["decided_by"] = meta["default"], "default"
-    result = {"meta": {k: meta.get(k) for k in ("title", "options", "rounds", "mode", "workspace", "private", "decision_rule",
-                                               "quorum", "started", "default")},
-              "workspace_changed": bool(meta.get("workspace_changed")),
-              "finished": dt.datetime.now().isoformat(timespec="seconds"),
-              "tally": t,
-              "seats": {sid: {k: st.get(k) for k in ("status", "model", "level", "weight", "tiebreak", "ballot", "history",
-                                                      "carried", "ratings_received", "ratings_note")}
-                        for sid, st in state.items()},
-              "skipped": meta.get("skipped", [])}
+    else:
+        if t["verdict"] and t["min_margin"] is not None and t["share"] < t["min_margin"] - 1e-9:
+            # the council picked something, but by less than the caller asked for: treated like a TIE
+            t["council_verdict"], t["verdict"], t["narrow_margin"] = t["verdict"], None, True
+        if t["verdict"]:
+            t["decided_by"] = "tiebreak" if t["tiebreak"] else "council"
+        elif meta.get("default"):
+            # nobody is there to ask: a council that cannot decide falls back to the brief's safe option
+            t["verdict"], t["decided_by"] = meta["default"], "default"
+    t["framing"] = framing_check(state)
+    t["framing_concern"] = t["framing"]["concern"]
+    v = t["verdict"]
+    seats = {sid: {k: st.get(k) for k in ("status", "model", "level", "weight", "tiebreak", "ballot", "history",
+                                           "carried", "ratings_received", "ratings_note")}
+             for sid, st in state.items()}
+    side = [(sid, st["ballot"]) for sid, st in seats.items() if v and st.get("status") == "ok" and st.get("ballot")
+            and st["ballot"].get("vote") == v]
+    return {"schema_version": SCHEMA_VERSION,
+            "meta": {k: meta.get(k) for k in ("title", "options", "rounds", "mode", "workspace", "private", "decision_rule",
+                                              "quorum", "started", "default", "min_margin", "deadline")},
+            "workspace_changed": bool(meta.get("workspace_changed")),
+            "finished": dt.datetime.now().isoformat(timespec="seconds"),
+            "tally": t,
+            "conditions": [{"seat": sid, "condition": x} for sid, b in side for x in b.get("conditions") or []],
+            "kill_criteria_for": v,
+            "kill_criteria": [{"seat": sid, "criterion": x} for sid, b in side for x in b.get("kill_criteria") or []][:20],
+            "unresolved_questions": [{"seat": sid, "vote": st["ballot"].get("vote"), "question": q["claim"], "source": q.get("source", "")}
+                                     for sid, st in seats.items() if st.get("status") == "ok" and st.get("ballot")
+                                     for q in open_questions(st["ballot"])][:20],
+            "usage": compute_usage(meta, state),
+            "seats": seats,
+            "skipped": meta.get("skipped", [])}
+
+
+def _dur(secs):
+    if secs is None:
+        return "-"
+    secs = int(round(secs))
+    return "%dm%02ds" % (secs // 60, secs % 60) if secs >= 60 else "%ds" % secs
+
+
+def summary_lines(result):
+    """Lines printed before DONE / VERDICT (status) and before the VERDICT line (run). Never the last line."""
+    t, u, lines = result.get("tally") or {}, result.get("usage"), []
+    if u:
+        bits = ["%d call(s)" % u["calls"]]
+        if u["nudges"]:
+            bits.append("%d nudge(s)" % u["nudges"])
+        if u["fallback_calls"]:
+            bits.append("%d on a fallback model" % u["fallback_calls"])
+        if u["unattended"]:
+            bits.append("unattended: %s" % ", ".join(u["unattended"]))
+        if u.get("total_wall_secs") is not None:
+            bits.append("wall %s" % _dur(u["total_wall_secs"]))
+        if u.get("deadline_hit"):
+            bits.append("run deadline reached")
+        lines.append("USAGE: " + ", ".join(bits))
+    if t.get("share") is not None:
+        m = "MARGIN: %s holds %.3f of the valid weight" % (t["share_of"], t["share"])
+        if t.get("min_margin") is not None:
+            m += " (min-margin %.3f %s)" % (t["min_margin"], "missed: narrow margin" if t.get("narrow_margin") else "met")
+        lines.append(m)
+    if t.get("framing_concern"):
+        f = t["framing"]
+        lines.append("FRAMING: concern (%d/%d seats say the options miss an action; advisory, vote unchanged)"
+                     % (f["flagged"], f["valid"]))
+    return lines
+
+
+def finish(run_dir, meta, state, options, cfg):
+    result = build_result(meta, state, options)
+    t = result["tally"]
     (run_dir / "result.json").write_text(encoding="utf-8", data=json.dumps(result, indent=2, ensure_ascii=False))
     (run_dir / "decision.md").write_text(encoding="utf-8", data=render(result))
-    log(run_dir, "done: verdict %s (%s)" % (t["verdict"] or ("NO QUORUM" if t.get("no_quorum") else "TIE"), t["decided_by"]))
+    log(run_dir, "done: verdict %s (%s)" % (t["verdict"] or ("NO QUORUM" if t.get("no_quorum") else "NARROW MARGIN"
+                                                            if t.get("narrow_margin") else "TIE"), t["decided_by"]))
     print((run_dir / "decision.md").read_text(encoding="utf-8"))
+    for line in summary_lines(result):
+        print(line)
     # last line, for agents acting without a user: VERDICT: <option|NONE> (council|tiebreak|default|none)
     print("VERDICT: %s (%s)" % (t["verdict"] or "NONE", t["decided_by"]))
 
@@ -921,8 +1257,18 @@ def render(result):
     if result.get("workspace_changed"):
         out += ["> **WARNING:** files in the workspace changed during the council. A seat may have broken the "
                 "read-only rule; check `git status` before trusting or keeping anything.", ""]
-    undecided = ("NO QUORUM (%d valid ballot(s), need %d)" % (t["valid_votes"], meta["quorum"]) if t.get("no_quorum")
-                 else "TIE (%s)" % t["tiebreak"])
+    fr = t.get("framing") or {}
+    if t.get("framing_concern"):
+        out += ["> **Framing concern (advisory):** %d of %d seats with a valid round-1 ballot said the options leave "
+                "out a concrete action (see \"Framing check\" below). The vote and the verdict are unchanged."
+                % (fr["flagged"], fr["valid"]), ""]
+    if t.get("no_quorum"):
+        undecided = "NO QUORUM (%d valid ballot(s), need %d)" % (t["valid_votes"], meta["quorum"])
+    elif t.get("narrow_margin"):
+        undecided = ("narrow margin: %s leads with share %.3f of the valid weight, below min-margin %.3f"
+                     % (t["council_verdict"], t["share"], t["min_margin"]))
+    else:
+        undecided = "TIE (%s)" % t["tiebreak"]
     if t.get("decided_by") == "workspace_changed":
         out.append("**Verdict: none, the workspace changed during the council** (the tally said %s). "
                    "Do not act on this run." % (t.get("council_verdict") or "nothing"))
@@ -938,6 +1284,12 @@ def render(result):
                    % (v, labels[v], t["score"][v], t["total_weight"], t["count"][v], t["valid_votes"]))
         if t["tiebreak"]:
             out += ["", "Tie-break: %s." % t["tiebreak"]]
+    if t.get("share") is not None and t.get("decided_by") != "workspace_changed":
+        m = "Margin: %s holds %.3f of the valid weight" % (t["share_of"], t["share"])
+        if t.get("min_margin") is not None:
+            m += "; min-margin %.3f %s" % (t["min_margin"], "missed (narrow margin), so the council's pick is not acted on"
+                                            if t.get("narrow_margin") else "met")
+        out += ["", m + "."]
     out += ["", "Rule: %s vote; weight = seat weight x (0.5 + 0.5 x mean peer evidence rating 0-2); "
                 "ballots without FACT/INFERENCE evidence do not count; ties go to the Fable seat." % meta["decision_rule"], ""]
     out += ["## Tally", "", "| Option | Weighted | Votes | Seats |", "|---|---|---|---|"]
@@ -976,7 +1328,7 @@ def render(result):
         for sid in t["voters"][v]:
             b = seats[sid]["ballot"]
             out.append("- **%s**: %s" % (sid, b["summary"]))
-            for e in b["evidence"][:5]:
+            for e in evidence_items(b)[:5]:
                 out.append("  - [%s] %s (%s)" % (e["type"], e["claim"], e["source"] or "no source"))
     dissent = [(sid, st) for sid, st in seats.items() if v and st.get("status") == "ok" and st["ballot"]["vote"] != v]
     if dissent:
@@ -984,15 +1336,47 @@ def render(result):
         for sid, st in dissent:
             b = st["ballot"]
             out.append("- **%s** voted %s: %s" % (sid, b["vote"], b["summary"]))
-            for e in b["evidence"][:3]:
+            for e in evidence_items(b)[:3]:
                 out.append("  - [%s] %s (%s)" % (e["type"], e["claim"], e["source"] or "no source"))
-    v_cond = [(sid, x) for sid, st in seats.items() if v and st.get("status") == "ok" and st["ballot"]["vote"] == v
-              for x in st["ballot"].get("conditions") or []]
+    v_cond = result.get("conditions") or []
     if v_cond:
-        out += ["", "## Conditions attached to %s (carry these out with it)" % v, ""] + ["- (%s) %s" % (sid, x) for sid, x in v_cond]
+        out += ["", "## Conditions attached to %s (carry these out with it)" % v, ""] + ["- (%s) %s" % (c["seat"], c["condition"]) for c in v_cond]
+    kills = result.get("kill_criteria") or []
+    if kills:
+        if t.get("decided_by") == "default":
+            head = ("## Kill criteria for %s (safe default; from the seats that voted %s, not a council choice)" % (v, v))
+        else:
+            head = "## Kill criteria for %s (watch these; if one is observed, reconsider the decision)" % v
+        out += ["", head, ""] + ["- (%s) %s" % (k["seat"], k["criterion"]) for k in kills]
+    unresolved = result.get("unresolved_questions") or []
+    if unresolved:
+        out += ["", "## Unresolved questions", ""] + [
+            "- (%s, voted %s) %s%s" % (q["seat"], q["vote"], q["question"], " (%s)" % q["source"] if q.get("source") else "")
+            for q in unresolved]
     risks = [(sid, x) for sid, st in seats.items() if st.get("ballot") for x in (st["ballot"].get("risks") or [])]
     if risks:
         out += ["", "## Risks raised", ""] + ["- (%s) %s" % (sid, x) for sid, x in risks[:20]]
+    if fr.get("proposals") or fr.get("restatements"):
+        out += ["", "## Framing check (round 1, advisory)", "",
+                "%d of %d valid seats proposed a missing option; a concern needs %d." % (fr["flagged"], fr["valid"], fr["threshold"])]
+        out += ["- (%s, voted %s) missing option: %s" % (x["seat"], x["vote"], x["option"]) for x in fr.get("proposals") or []]
+        out += ["- (%s) restated the question as: %s" % (sid, r) for sid, r in (fr.get("restatements") or {}).items()]
+    u = result.get("usage")
+    if u:
+        walls = ", ".join("%s %s" % (r, _dur(x)) for r, x in sorted(u["wall_secs"].items()))
+        out += ["", "## Usage", "",
+                "%d CLI call(s), %d nudge(s), %d on a fallback model; rounds run %s of %s; wall time %s%s."
+                % (u["calls"], u["nudges"], u["fallback_calls"], u["rounds_run"], u["rounds_requested"],
+                   (walls + ", total " + _dur(u["total_wall_secs"])) if walls else "not recorded",
+                   "; run deadline reached" if u.get("deadline_hit") else ""),
+                "Calls are CLI processes started (a nudge is its own call); no token or cost figures.", "",
+                "| Seat | Calls | Nudges | Fallback calls | Call time | Note |", "|---|---|---|---|---|---|"]
+        for sid, r in u["per_seat"].items():
+            note = ("UNATTENDED" if sid in u["unattended"] else "carried" if sid in u["carried"] else "")
+            out.append("| %s | %d | %d | %d | %s | %s |" % (sid, r["calls"], r["nudges"], r["fallback_calls"], _dur(r["call_secs"]), note))
+        if u["skipped"]:
+            out.append("")
+            out.append("Skipped (not called): %s." % ", ".join(u["skipped"]))
     out += ["", "Run finished %s. Full transcripts: r1/, r2/ ... next to this file." % result["finished"], ""]
     return "\n".join(out)
 
@@ -1007,27 +1391,14 @@ def cmd_tally(args):
     return 0
 
 
-def cmd_status(args):
-    runs = [p for p in RUNS_DIR.glob("*") if (p / "meta.json").exists()]
-    run_dir = Path(args.run) if args.run else max(runs, key=lambda p: p.stat().st_mtime, default=None)
-    if not run_dir or not run_dir.exists():
-        raise SystemExit("no run found in %s" % RUNS_DIR)
-    print(run_dir)
-    prog = run_dir / "progress.log"
-    if prog.exists():
-        print(prog.read_text(encoding="utf-8").rstrip())
+def run_state(run_dir):
+    """(state, result or None, exit code) of a run directory, for `status`."""
     if (run_dir / "decision.md").exists():
         res = run_dir / "result.json"
         result = json.loads(res.read_text(encoding="utf-8")) if res.exists() else {}
         if result.get("workspace_changed"):
-            print("TAINTED (workspace changed during the council; do not act on it)")
-            print("VERDICT: NONE (workspace_changed)")
-            return 4
-        print("DONE")
-        t = result.get("tally") or {}
-        if t:
-            print("VERDICT: %s (%s)" % (t.get("verdict") or "NONE", t.get("decided_by")))
-        return 0
+            return "TAINTED", result, 4
+        return "DONE", result, 0
     pid = json.loads((run_dir / "meta.json").read_text(encoding="utf-8")).get("pid")
     alive = False
     if pid:
@@ -1039,10 +1410,61 @@ def cmd_status(args):
         except OSError:
             alive = False
     if alive:
-        print("RUNNING" if prog.exists() else "STARTING")
-    else:
+        return ("RUNNING" if (run_dir / "progress.log").exists() else "STARTING"), None, 0
+    return "FAILED", None, 1
+
+
+def status_json(run_dir, state, result):
+    """The machine contract for hosts (schema_version 2). Absent fields of older results read as false/empty."""
+    result = result or {}
+    t = result.get("tally") or {}
+    fr = t.get("framing") or {}
+    u = result.get("usage") or {}
+    return {"schema_version": SCHEMA_VERSION, "result_schema_version": result.get("schema_version", 1) if result else None,
+            "run": str(run_dir), "state": state,
+            "verdict": t.get("verdict"), "decided_by": t.get("decided_by"), "council_verdict": t.get("council_verdict"),
+            "actionable": state == "DONE" and bool(t.get("verdict")),
+            "share": t.get("share"), "share_of": t.get("share_of"), "min_margin": t.get("min_margin"),
+            "narrow_margin": bool(t.get("narrow_margin")),
+            "framing_concern": bool(t.get("framing_concern")),
+            "framing": {k: fr.get(k) for k in ("flagged", "valid", "threshold", "proposals")} if fr else None,
+            "conditions": result.get("conditions") or [],
+            "kill_criteria_for": result.get("kill_criteria_for"), "kill_criteria": result.get("kill_criteria") or [],
+            "unresolved_questions": result.get("unresolved_questions") or [],
+            "unattended": u.get("unattended") or [],
+            "usage": {k: v for k, v in u.items() if k != "per_seat"} or None,
+            "decision_md": str(run_dir / "decision.md") if state in ("DONE", "TAINTED") else None}
+
+
+def cmd_status(args):
+    runs = [p for p in RUNS_DIR.glob("*") if (p / "meta.json").exists()]
+    run_dir = Path(args.run) if args.run else max(runs, key=lambda p: p.stat().st_mtime, default=None)
+    if not run_dir or not run_dir.exists():
+        raise SystemExit("no run found in %s" % RUNS_DIR)
+    state, result, rc = run_state(run_dir)
+    if args.json:
+        print(json.dumps(status_json(run_dir, state, result), indent=2, ensure_ascii=False))
+        return rc
+    print(run_dir)
+    prog = run_dir / "progress.log"
+    if prog.exists():
+        print(prog.read_text(encoding="utf-8").rstrip())
+    if state in ("DONE", "TAINTED"):
+        for line in summary_lines(result):
+            print(line)
+    if state == "TAINTED":
+        print("TAINTED (workspace changed during the council; do not act on it)")
+        print("VERDICT: NONE (workspace_changed)")
+    elif state == "DONE":
+        print("DONE")
+        t = result.get("tally") or {}
+        if t:
+            print("VERDICT: %s (%s)" % (t.get("verdict") or "NONE", t.get("decided_by")))
+    elif state == "FAILED":
         print("FAILED (runner exited without decision.md; see rt log / progress.log)")
-    return 0 if alive else 1
+    else:
+        print(state)
+    return rc
 
 
 def cmd_doctor(args):
@@ -1107,7 +1529,13 @@ def main(argv=None):
     r.add_argument("--workspace", help="directory seats may read (read-only); default: none, seats run in empty sandboxes")
     r.add_argument("--private", action="store_true", help="drop seats whose provider may train on prompts (free opencode models)")
     r.add_argument("--allow-sensitive", action="store_true", help="skip the secret scan block (false positives only)")
-    r.add_argument("--timeout", type=int, help="seconds per seat per round (default 900)")
+    r.add_argument("--timeout", type=int, help="seconds per CLI call (default 900); a nudge or fallback is another call")
+    r.add_argument("--deadline", type=int, help="seconds for the whole run: no new call starts after it, a running call "
+                                                "is cut at it, and the ballots so far are tallied (default: none)")
+    r.add_argument("--min-margin", help="winner's share of the valid weight needed to act, e.g. 0.6 or 2/3; below it the "
+                                        "council's pick is recorded but --default applies, as on a TIE (default: off)")
+    r.add_argument("--dry-run", action="store_true", help="resolve seats, models and options, print the plan as JSON "
+                                                           "and exit: no run directory, no model call")
     r.add_argument("--title")
     r.add_argument("--out", help="run directory (default ~/.roundtable/runs/<time>-<slug>)")
     r.add_argument("--seed", type=int, help="seed for the anonymous label shuffle")
@@ -1126,6 +1554,7 @@ def main(argv=None):
 
     s = sub.add_parser("status", help="progress of a run (default: latest)")
     s.add_argument("run", nargs="?")
+    s.add_argument("--json", action="store_true", help="print one JSON object (state, verdict, flags) for hosts")
     s.set_defaults(func=cmd_status)
 
     t = sub.add_parser("tally", help="recompute decision.md from a finished run")

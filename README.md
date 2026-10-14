@@ -98,9 +98,19 @@ llm-roundtable run --brief q.md --seats duo
 # Cheapest: one blind round
 llm-roundtable run --brief q.md --rounds 1
 
+# Preflight: seats, fallbacks, quorum and call/time bounds as JSON; no model call, nothing written
+llm-roundtable run --brief q.md --default C --dry-run
+
 # Start detached (returns the run directory at once), then poll
 RUN=$(llm-roundtable run --brief q.md --detach)
-llm-roundtable status "$RUN"     # ... DONE, then VERDICT: ...
+llm-roundtable status "$RUN"         # ... DONE, then VERDICT: ...
+llm-roundtable status --json "$RUN"  # state, verdict, margin, framing concern, kill criteria as JSON
+
+# Act only on a clear win: below 2/3 of the valid weight the --default applies (as on a tie)
+llm-roundtable run --brief q.md --default C --min-margin 2/3
+
+# Cap the whole run at 30 minutes; the ballots so far are tallied
+llm-roundtable run --brief q.md --default C --deadline 1800
 ```
 </details>
 
@@ -119,10 +129,10 @@ flowchart TD
 ```
 
 1. **Brief.** The host agent writes a self-contained markdown brief with 2-5 concrete options. A secret scanner blocks obvious credentials before anything leaves the machine.
-2. **Round 1 (blind).** Every seat answers independently with a vote, confidence, evidence (`FACT` / `INFERENCE` / `ASSUMPTION`, each with a source), risks and conditions.
+2. **Round 1 (blind).** Every seat answers independently with a vote, confidence, evidence (`FACT` / `INFERENCE` / `ASSUMPTION`, each with a source, plus `UNKNOWN` open questions that never count as evidence), risks, conditions and optional kill criteria ("if X is observed, reconsider"). Each seat also restates the question and may name one option the brief left out; if at least half the seats (and at least two) do, the run carries an advisory framing concern.
 3. **Round 2 (cross-examination).** Every seat gets the anonymised positions, rates each one's evidence 0-2, writes rebuttals and votes again. Votes may change only when specific evidence forces it, and the change is logged.
-4. **Tally.** Each valid ballot counts `seat_weight × (0.5 + 0.5 × mean peer rating)`, so a vote backed by evidence the others rated 2/2 weighs 1.5 and one rated 0/2 weighs 0.5 (self-ratings ignored). Highest score wins. Tie: the option the Fable seat chose, else TIE. Fewer than 2 valid ballots: NO QUORUM. TIE or NO QUORUM: your `--default`.
-5. **Act.** The host carries out the verdict including its conditions, and records the question, verdict, strongest evidence, strongest dissent and unattended seats where you will see them.
+4. **Tally.** Each valid ballot counts `seat_weight × (0.5 + 0.5 × mean peer rating)`, so a vote backed by evidence the others rated 2/2 weighs 1.5 and one rated 0/2 weighs 0.5 (self-ratings ignored). Highest score wins. Tie: the option the Fable seat chose, else TIE. Fewer than 2 valid ballots: NO QUORUM. TIE or NO QUORUM: your `--default`. With the opt-in `--min-margin`, a winner below that share of the valid weight also falls back to `--default`; the council's pick is kept in `result.json`.
+5. **Act.** The host carries out the verdict including its conditions, and records the question, verdict, strongest evidence, strongest dissent, kill criteria, unresolved questions, a framing concern and unattended seats where you will see them. `decision.md` ends with a usage summary (calls, nudges, fallbacks, wall time per round), and `status --json` gives hosts the same flags as JSON.
 
 Full rules, prompts and maths: [`references/protocol.md`](skills/llm-roundtable/references/protocol.md).
 
@@ -212,7 +222,7 @@ No. It calls the official CLIs you are already logged into (Claude Code, Codex, 
 OpenCode), so usage counts against your existing subscriptions. OpenCode free models need no login at all.
 
 **How long does a council take and what does it cost?**
-About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. `--rounds 1` halves it, `--seats duo` uses only two Claude models.
+About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. `--rounds 1` halves it, `--seats duo` uses only two Claude models. `run --dry-run` prints the upper bounds for your setup, `--deadline` caps the whole run, and every `decision.md` ends with the calls and wall time it actually took.
 
 **Can I use it with only Claude Code (or only Codex)?**
 Yes. Use the `duo`, `solo-codex`, `solo-grok` or `solo-agy` preset. Adding `opencode` (free, no login) is the
