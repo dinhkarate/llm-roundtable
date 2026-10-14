@@ -16,7 +16,8 @@ Key facts:
 
 ## Docs
 
-- [README](https://github.com/dinhkarate/llm-roundtable/blob/main/README.md): overview, quick start, comparison with karpathy/llm-council, council-of-high-intelligence and Zen MCP, FAQ
+- [Homepage](https://dinhkarate.github.io/llm-roundtable/): landing page
+- [README](https://github.com/dinhkarate/llm-roundtable/blob/main/README.md): overview, quick start, comparison with karpathy/llm-council, claude-skills-llm-council, council-of-high-intelligence and Zen MCP, FAQ
 - [SKILL.md](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/SKILL.md): what the host agent does (brief, run, act on the verdict)
 - [Protocol](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/references/protocol.md): rounds, prompts, evidence rules, maths, sandboxing
 - [Hosts](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/references/hosts.md): per-host setup, single-tool presets, adding a new CLI via JSON
