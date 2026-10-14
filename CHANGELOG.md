@@ -43,9 +43,14 @@
 - The workspace fingerprint is compared after every round; a write stops the council before the next round.
 - `tally.vendor_clis` / `low_diversity` (reported, not a quorum rule), and `provenance` (script version, brief and
   options hashes, the label-shuffle seed, the workspace's git HEAD) in result.json.
+- Carried ballots (a seat that failed in a later round keeps its earlier ballot) are marked `ok (carried)` with a
+  "Carried ballots" section in decision.md and `carried` in `status --json`.
+- `outcome <run> right|wrong|mixed|unknown [--note]` and `ledger [--json]`: record whether acting on a verdict
+  worked, and summarise all runs (decided_by, outcomes, the early-stop shadow measurement, median calls, wall time
+  and tokens). Pre-0.2 results get their shadow rebuilt from history. Never fed into a tally.
 - Sample briefs in `skills/llm-roundtable/references/briefs/` (decide and review), checked by a test.
 - Claude Code plugin: `skills/llm-roundtable/.claude-plugin/plugin.json` and a root marketplace
-  (`/plugin marketplace add dinhkarate/llm-roundtable`). A test keeps package.json, SKILL.md, plugin.json, the
+  (`/plugin marketplace add dinhkarate/llm-roundtable`), installed from GitHub into a clean config and run. A test keeps package.json, SKILL.md, plugin.json, the
   script's `--version` and this changelog on one version.
 
 ## 0.1.1 (2026-10-14)

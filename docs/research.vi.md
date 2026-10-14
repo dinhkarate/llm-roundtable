@@ -122,7 +122,12 @@ Ngoài lỗi code, chính lúc chạy thật mới lộ ra: codex mặc định 
 
 - Orca transport: mỗi ghế là một terminal agent trong Orca (xem được TUI, chạy được ghế trên máy khác).
 - Ghế remote (sanrokyu-chan, Windows) qua SSH: adapter `ssh host claude -p ...`.
-- Thử luật `count` vs `weighted` trên một bộ câu hỏi có đáp án để chọn mặc định bằng số liệu.
+- Thử luật `count` vs `weighted` trên một bộ câu hỏi có đáp án để chọn mặc định bằng số liệu
+  (`outcome` + `ledger` gom số liệu từ lúc dùng thật).
+- Bật early stop mặc định hay không: `ledger` trên 15 run của tác giả (2026-10-15): 12 run có vòng 2, 5 run vòng 1
+  nhất trí, và chưa run nào trong 5 run đó đổi phiếu ở vòng 2. Còn quá ít để đổi mặc định.
+- Thử lại/tiếp tục cho ghế UNATTENDED (hiện một lần hết quota thoáng qua là mất ghế cả lần chạy).
+- Ghế Gemini: tài khoản agy của tác giả bị khoá (403) nên chưa kiểm chứng được fallback thay thế.
 
 ## Nguồn
 

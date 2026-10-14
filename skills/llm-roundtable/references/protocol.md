@@ -96,7 +96,9 @@ CLI missing on PATH -> UNATTENDED immediately
   walk to the fallback model: it runs on the same account and would fail the same way. The seat is
   UNATTENDED with "account-level limit, fallback skipped".
 - A seat that fell back in round 1 starts later rounds on the fallback model.
-- If a seat fails in a later round, its previous ballot is carried forward and marked.
+- If a seat fails in a later round, its previous ballot is carried forward and marked: it still counts, but it
+  never answered that round's cross-examination. decision.md shows `ok (carried)` and a "Carried ballots"
+  section; `usage.carried` and `status --json` `carried` list the seats.
 - A fallback that equals another seat's primary is dropped (two seats must not be the same voice).
 - OpenCode `auto:opencode-free`: `opencode models` filtered to `opencode/*free` (or zero cost on
   models.dev), excluding families that already sit (claude, gpt, grok, gemini...) and models marked
@@ -197,6 +199,16 @@ rounds, `timeout_per_call`, quorum, each seat (`primary`, `fallback`, `fallback_
 `n` models over `r` rounds: `max_calls = 2 x (r + n - 1)` (each model call may get one nudge, and the
 level only moves down the chain); `max_wall_secs = rounds run x 2 x max n x timeout`, capped by
 `--deadline`. Both exclude discovery, the workspace snapshot/fingerprint and CLI start-up.
+
+## Outcomes and the ledger
+
+`outcome <run> right|wrong|mixed|unknown [--note ...]` records afterwards whether acting on a verdict
+turned out right (`outcome.json` in the run directory). `ledger [--json]` summarises every finished run
+under the runs directory: how runs were decided, recorded outcomes (also per `decided_by`), and the
+early-stop shadow measurement (of the runs that ran round 2: how many had a unanimous round 1, and how
+many of those still changed a vote), plus median calls, wall time and tokens. Results written before
+v0.2 have their shadow rebuilt from the ballot history. Neither command ever feeds a tally: they exist
+to choose defaults (`--early-stop`, `--min-margin`, count vs weighted) from data.
 
 ## Why this shape (short)
 

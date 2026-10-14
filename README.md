@@ -120,6 +120,10 @@ llm-roundtable run --brief q.md --default C --deadline 1800
 
 # Skip the cross-exam when round 1 is unanimous (3+ valid ballots from 2+ vendors; never in review mode)
 llm-roundtable run --brief q.md --default C --early-stop
+
+# Later: record whether the decision worked out, then see verdicts, outcomes, early-stop data and median tokens
+llm-roundtable outcome "$RUN" right --note "shipped, no incident"
+llm-roundtable ledger
 ```
 
 Sample briefs to copy (a technology choice, a migration, a dependency upgrade, ship-or-defer and a PR review):

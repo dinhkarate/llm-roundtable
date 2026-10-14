@@ -137,7 +137,12 @@ README and the GitHub Actions docs as evidence.
 
 - Orca transport: each seat as its own Orca agent terminal (visible TUIs, seats on other machines).
 - Remote seats over SSH: an adapter like `ssh host claude -p ...`.
-- Compare the `count` and `weighted` rules on a question set with known answers, and pick the default from data.
+- Compare the `count` and `weighted` rules on a question set with known answers, and pick the default from data
+  (`outcome` + `ledger` collect the data from real use).
+- Early stop as a default: `ledger` on the author's 15 runs (2026-10-15): of 12 runs that cross-examined, 5 had a
+  unanimous round 1 and none of those changed a vote in round 2. Too few runs to flip the default yet.
+- Retry or resume for UNATTENDED seats (a quota blip currently loses the seat for the run).
+- The Gemini seat: agy is blocked on the author's account (403), so a replacement fallback cannot be verified here.
 
 ## Sources
 

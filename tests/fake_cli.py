@@ -23,6 +23,7 @@
   ghost          its only FACT cites ghost.py:3, a file that is not in any workspace
 Usage: fake_cli.py <model> [--format=claude-json|codex-jsonl|grok-json|opencode-jsonl]   (prompt on stdin)
        fake_cli.py export <session>   (opencode-style `session export`: token totals as JSON)
+With --crash-in-cross, any cross-exam prompt crashes (exit 1): the seat's round-1 ballot is carried.
 With --format, stdout is wrapped the way that CLI prints it, with fixed token counts (10 fresh + 90 cached in, 5 out).
 """
 import atexit
@@ -93,6 +94,10 @@ if model == "stall":
 if model == "prose":
     print("I think A is best.")
     sys.exit(0)
+
+if "--crash-in-cross" in sys.argv[2:] and cross:
+    print("Error: connection reset", file=sys.stderr)
+    sys.exit(1)
 
 parts = model.split("-")
 if parts[0] == "lazy" and "previous attempt ended without a usable JSON ballot" not in prompt:

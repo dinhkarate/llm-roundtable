@@ -49,6 +49,8 @@ npx llm-roundtable run --brief brief.md --default C --dry-run     # kiểm tra t
 npx llm-roundtable status                                         # tiến độ lần chạy mới nhất
 npx llm-roundtable status --json <thư-mục-run>                     # trạng thái, phán quyết và các cờ dạng JSON cho agent
 npx llm-roundtable run --brief brief.md --default C --early-stop  # vòng 1 nhất trí (≥3 phiếu hợp lệ, ≥2 hãng) thì bỏ vòng chất vấn
+npx llm-roundtable outcome <thư-mục-run> right --note "..."      # ghi lại sau này: quyết định đó đúng/sai (right|wrong|mixed|unknown)
+npx llm-roundtable ledger                                         # tổng hợp mọi lần chạy: kết quả, dữ liệu early-stop, token trung vị
 ```
 
 Brief mẫu để chép: [`references/briefs/`](skills/llm-roundtable/references/briefs/) (chọn công nghệ, migration, nâng

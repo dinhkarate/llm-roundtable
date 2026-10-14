@@ -136,6 +136,8 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
   user's standing permission (push to shared branches, merge, deploy, publish, message people) still
   need it; the council can only choose among actions you were already allowed to take. It never
   authorizes leaking secrets, deleting data or backups, or spending money.
+- When you later learn whether acting on a verdict worked, record it: `python3 $S outcome "$RUN" right|wrong|mixed`
+  (with `--note`). `python3 $S ledger` summarises all runs; it never changes a verdict.
 - If the user is present and asks, report the same items instead of acting, and give your own view
   separately, labelled as yours.
 

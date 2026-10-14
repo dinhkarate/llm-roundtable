@@ -19,7 +19,8 @@ Key facts:
 - Ballots may list `UNKNOWN` open questions (never evidence) and kill criteria; round 1 adds a framing check, and an advisory framing concern is raised when at least half the valid seats (and at least two) name a missing option.
 - decision.md and result.json include usage: CLI calls per seat (nudges and fallbacks included), wall time per round, and tokens per seat as reported by each CLI (claude, codex, grok, opencode; agy reports none).
 - Optional `--early-stop`: skips the cross-exam when round 1 is unanimous with at least 3 valid ballots from 2+ vendor CLIs; never in review mode. Every run records whether round 1 was unanimous and who changed vote after it.
-- Typical run: about 12 model calls, 5-20 minutes.
+- `outcome <run> right|wrong|mixed|unknown` records afterwards whether a decision worked out; `ledger` summarises all runs (how they were decided, outcomes, how often round 1 was unanimous and round 2 still changed a vote, median calls, time and tokens). Neither feeds a verdict.
+- Typical run: about 12 model calls, 5-20 minutes; a measured full council (5 seats answering, 2 rounds) used 684k tokens in 6.5 minutes.
 
 ## Docs
 

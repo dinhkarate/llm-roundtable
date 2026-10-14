@@ -11,6 +11,8 @@ Subcommands:
   doctor  show which seats can sit (CLI found, resolved models); --probe pings each model
   status  show progress of a run (for hosts that ran `run` in the background); --json for hosts
   tally   recompute the verdict from a finished run directory
+  outcome record whether acting on a run's verdict turned out right (right|wrong|mixed|unknown)
+  ledger  summary of every finished run: verdicts, outcomes, early-stop shadow measurement, usage
 
 `run --dry-run` resolves seats, models and options and prints the plan as JSON without calling a model.
 
@@ -1691,7 +1693,8 @@ def render(result):
         if st.get("level"):
             model += " (fallback)"
         out.append("| %s | %s | %s | %s | %s | %s | %.2f | %s |" % (
-            sid, model, "UNATTENDED" if st.get("status") == "unattended" else st.get("status"),
+            sid, model, "UNATTENDED" if st.get("status") == "unattended" else
+            "%s (carried)" % st.get("status") if st.get("carried") else st.get("status"),
             b.get("vote") or "-", "%.2f" % b["confidence"] if b else "-",
             rows[sid]["peer_score"] if rows[sid]["peer_score"] is not None else "-", rows[sid]["weight"], hist))
     unatt = [(sid, st) for sid, st in seats.items() if st.get("status") == "unattended"]
@@ -1701,6 +1704,12 @@ def render(result):
             out.append("- **%s**: %s" % (sid, (st.get("history") or [{}])[0].get("detail") or "no model answered"))
         for s in result.get("skipped", []):
             out.append("- **%s**: %s" % (s["id"], s["reason"]))
+    carried = [(sid, st) for sid, st in seats.items() if st.get("carried") and st.get("status") != "unattended"]
+    if carried:
+        out += ["", "## Carried ballots", "",
+                "These seats failed in a later round; their earlier ballot still counts, but it never answered the "
+                "cross-examination of that round.", ""]
+        out += ["- **%s**: %s" % (sid, st["carried"]) for sid, st in carried]
     changed = []
     for sid, st in seats.items():
         votes = [(h.get("ballot") or {}).get("vote") for h in st.get("history") or [] if h.get("status") == "ok"]
@@ -1840,6 +1849,7 @@ def status_json(run_dir, state, result):
             "kill_criteria_for": result.get("kill_criteria_for"), "kill_criteria": result.get("kill_criteria") or [],
             "unresolved_questions": result.get("unresolved_questions") or [],
             "unattended": u.get("unattended") or [],
+            "carried": u.get("carried") or [],
             "early_stop": bool(t.get("early_stop")),
             "low_diversity": bool(t.get("low_diversity")),
             "injection_suspected": result.get("injection_suspected") or [],
@@ -1877,6 +1887,101 @@ def cmd_status(args):
     else:
         print(state)
     return rc
+
+
+OUTCOMES = ("right", "wrong", "mixed", "unknown")
+
+
+def cmd_outcome(args):
+    """Record, after the fact, whether acting on a run's verdict turned out right. Stored next to the run
+    (outcome.json); read only by `ledger`, never by a tally."""
+    run_dir = Path(args.run)
+    if not (run_dir / "result.json").exists():
+        raise SystemExit("%s has no result.json (not a finished run)" % run_dir)
+    rec = {"outcome": args.outcome, "note": args.note or "", "recorded": dt.datetime.now().isoformat(timespec="seconds")}
+    (run_dir / "outcome.json").write_text(encoding="utf-8", data=json.dumps(rec, indent=2, ensure_ascii=False))
+    print("%s: %s" % (run_dir, args.outcome))
+    return 0
+
+
+def _median(xs):
+    xs = sorted(xs)
+    if not xs:
+        return None
+    m = len(xs) // 2
+    return xs[m] if len(xs) % 2 else (xs[m - 1] + xs[m]) / 2.0
+
+
+def ledger_summary(runs_dir):
+    """Aggregate every finished run under runs_dir: verdicts, recorded outcomes, the early-stop shadow measurement
+    and usage. Telemetry for tuning defaults from data; nothing here feeds a verdict."""
+    runs = []
+    for d in sorted(p for p in Path(runs_dir).glob("*") if (p / "result.json").exists()):
+        try:
+            r = json.loads((d / "result.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        o = d / "outcome.json"
+        try:
+            outcome = json.loads(o.read_text(encoding="utf-8")).get("outcome") if o.exists() else None
+        except (OSError, ValueError):
+            outcome = None
+        runs.append((d, r, outcome))
+    by_decided, outcomes, by_outcome_decided = {}, {}, {}
+    shadow_runs = unanimous = changed_after = early = 0
+    tokens, walls, calls = [], [], []
+    for d, r, outcome in runs:
+        t = r.get("tally") or {}
+        dec = t.get("decided_by") or "none"
+        by_decided[dec] = by_decided.get(dec, 0) + 1
+        if outcome:
+            outcomes[outcome] = outcomes.get(outcome, 0) + 1
+            key = "%s/%s" % (dec, outcome)
+            by_outcome_decided[key] = by_outcome_decided.get(key, 0) + 1
+        seats = r.get("seats") or {}
+        sh = r.get("shadow") or (shadow_check(seats) if seats else None)  # v0.1 results: rebuilt from history
+        rounds_run = (r.get("usage") or {}).get("rounds_run") or max([len(st.get("history") or []) for st in seats.values()] or [0])
+        if sh and rounds_run >= 2:  # only runs that did cross-examine can tell
+            shadow_runs += 1
+            if sh.get("r1_unanimous"):
+                unanimous += 1
+                changed_after += bool(sh.get("changed_after_r1"))
+        early += bool(t.get("early_stop"))
+        u = r.get("usage") or {}
+        if u.get("tokens"):
+            tokens.append(u["tokens"]["total"])
+        if u.get("total_wall_secs") is not None:
+            walls.append(u["total_wall_secs"])
+        if u.get("calls") is not None:
+            calls.append(u["calls"])
+    return {"runs": len(runs), "decided_by": by_decided, "outcomes": outcomes, "outcomes_by_decided": by_outcome_decided,
+            "without_outcome": sum(1 for _, _, o in runs if not o),
+            "early_stopped": early,
+            "shadow": {"cross_examined_runs": shadow_runs, "r1_unanimous": unanimous,
+                       "unanimous_then_changed": changed_after,
+                       "note": "of the runs that ran round 2: how often round 1 was unanimous, and how often a seat "
+                               "still changed vote after a unanimous round 1 (what --early-stop would have skipped)"},
+            "median_tokens": _median(tokens), "median_wall_secs": _median(walls), "median_calls": _median(calls),
+            "runs_with_tokens": len(tokens)}
+
+
+def cmd_ledger(args):
+    s = ledger_summary(RUNS_DIR)
+    if args.json:
+        print(json.dumps(s, indent=2, ensure_ascii=False))
+        return 0
+    print("%d finished run(s) in %s" % (s["runs"], RUNS_DIR))
+    print("decided by: %s" % (", ".join("%s %d" % kv for kv in sorted(s["decided_by"].items())) or "-"))
+    print("outcomes: %s; %d run(s) without one (record with: outcome <run> right|wrong|mixed|unknown)"
+          % (", ".join("%s %d" % kv for kv in sorted(s["outcomes"].items())) or "none recorded", s["without_outcome"]))
+    sh = s["shadow"]
+    print("early stop: %d run(s) stopped early; of %d cross-examined run(s), %d had a unanimous round 1 and %d of "
+          "those still changed a vote in round 2" % (s["early_stopped"], sh["cross_examined_runs"], sh["r1_unanimous"],
+                                                     sh["unanimous_then_changed"]))
+    print("median per run: %s call(s), %s, tokens %s (%d run(s) with token figures)" % (
+        s["median_calls"] if s["median_calls"] is not None else "-", _dur(s["median_wall_secs"]),
+        "%.1fk" % (s["median_tokens"] / 1000.0) if s["median_tokens"] is not None else "-", s["runs_with_tokens"]))
+    return 0
 
 
 def cmd_doctor(args):
@@ -1971,6 +2076,16 @@ def main(argv=None):
     s.add_argument("run", nargs="?")
     s.add_argument("--json", action="store_true", help="print one JSON object (state, verdict, flags) for hosts")
     s.set_defaults(func=cmd_status)
+
+    o = sub.add_parser("outcome", help="record whether acting on a run's verdict turned out right (for `ledger`)")
+    o.add_argument("run")
+    o.add_argument("outcome", choices=OUTCOMES)
+    o.add_argument("--note")
+    o.set_defaults(func=cmd_outcome)
+
+    lg = sub.add_parser("ledger", help="summary of every finished run: verdicts, outcomes, early-stop shadow, usage")
+    lg.add_argument("--json", action="store_true")
+    lg.set_defaults(func=cmd_ledger)
 
     t = sub.add_parser("tally", help="recompute decision.md from a finished run")
     t.add_argument("run")

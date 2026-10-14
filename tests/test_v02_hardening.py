@@ -282,6 +282,45 @@ class HardeningEndToEndTest(test_v02.E2EBase):
         self.assertIn("**Low diversity:**", md)
 
 
+class LedgerEndToEndTest(test_v02.E2EBase):
+    def test_carried_ballot_is_shown_and_outcomes_reach_the_ledger(self):
+        # "flaky" seat: votes in round 1, then its CLI fails in round 2 -> carried
+        self.config([{"id": "a", "adapter": "fake", "models": ["vote-A"]},
+                     {"id": "b", "adapter": "fake", "models": ["vote-A-2"]},
+                     {"id": "c", "adapter": "late", "models": ["vote-B"]}])
+        cfg = json.loads((self.tmp / "cfg.json").read_text())
+        cfg["adapters"]["late"] = {"bin": sys.executable, "argv": [str(FAKE), "{model}", "--crash-in-cross"], "stdin": True}
+        (self.tmp / "cfg.json").write_text(json.dumps(cfg))
+        res, md, _, run = self.run_council()
+        self.assertTrue(res["seats"]["c"]["carried"].startswith("r2 "))
+        self.assertIn("## Carried ballots", md)
+        self.assertIn("| c | vote-B | ok (carried) |", md)
+        self.assertEqual(json.loads(self.status(run, "--json").stdout)["carried"], ["c"])
+        self.cli("outcome", str(run), "right", "--note", "shipped, no incident", rc=0)
+        self.assertEqual(json.loads((run / "outcome.json").read_text())["outcome"], "right")
+        self.cli("run", "--brief", str(self.tmp / "brief.md"), "--seats", "t", "--out", str(self.tmp / "runs" / "x"),
+                 "--rounds", "1", "--timeout", "60", rc=0)
+        import shutil
+        shutil.copytree(str(run), str(self.tmp / "runs" / "y"))
+        lg = json.loads(self.cli("ledger", "--json", rc=0).stdout)
+        self.assertEqual((lg["runs"], lg["outcomes"], lg["without_outcome"]), (2, {"right": 1}, 1))
+        self.assertEqual(lg["shadow"]["cross_examined_runs"], 1)  # the --rounds 1 run cannot tell
+        self.assertEqual(lg["shadow"]["r1_unanimous"], 0)  # a split round 1
+        self.assertIn("1 run(s) without one", self.cli("ledger", rc=0).stdout)
+        self.cli("outcome", str(self.tmp), "right", rc=1)  # not a run directory
+
+    def test_ledger_rebuilds_the_shadow_of_v01_results(self):
+        d = self.tmp / "runs" / "old"
+        d.mkdir(parents=True)
+        hist = lambda v1, v2: [{"status": "ok", "ballot": {"vote": v1}}, {"status": "ok", "ballot": {"vote": v2}}]  # noqa: E731
+        (d / "result.json").write_text(json.dumps({"tally": {"decided_by": "council"}, "seats": {
+            "a": {"status": "ok", "ballot": {"vote": "B"}, "history": hist("A", "B")},
+            "b": {"status": "ok", "ballot": {"vote": "A"}, "history": hist("A", "A")}}}))
+        self.config([{"id": "a", "adapter": "fake", "models": ["vote-A"]}])
+        sh = json.loads(self.cli("ledger", "--json", rc=0).stdout)["shadow"]
+        self.assertEqual((sh["cross_examined_runs"], sh["r1_unanimous"], sh["unanimous_then_changed"]), (1, 1, 1))
+
+
 class BriefPackTest(unittest.TestCase):
     """The sample briefs parse into the options they intend and carry nothing the secret scan blocks."""
     DIR = Path(rt.__file__).resolve().parent.parent / "references" / "briefs"
