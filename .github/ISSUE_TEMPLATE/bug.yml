@@ -1,0 +1,14 @@
+name: Bug report
+description: A council run failed, hung or produced a wrong verdict
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: {label: What happened, description: "Command you ran and what you expected instead."}
+    validations: {required: true}
+  - type: textarea
+    id: log
+    attributes: {label: progress.log, description: "From ~/.roundtable/runs/<run>/progress.log. Remove anything private.", render: text}
+  - type: input
+    id: env
+    attributes: {label: Environment, placeholder: "macOS 15 / Python 3.9 / claude 3.x / codex 1.x / grok / agy / opencode versions"}

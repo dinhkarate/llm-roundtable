@@ -1,0 +1,14 @@
+name: New seat / CLI adapter
+description: Propose another CLI or model as a council seat
+labels: [adapter]
+body:
+  - type: input
+    id: cli
+    attributes: {label: CLI and model, placeholder: "qwen-code / qwen3-coder-plus"}
+    validations: {required: true}
+  - type: textarea
+    id: readonly
+    attributes: {label: How it runs headless and read-only, description: "Flags for non-interactive mode, sandbox or tool allowlist, how to disable MCP/publishing tools."}
+  - type: textarea
+    id: errors
+    attributes: {label: Quota / unknown-model error text, render: text}

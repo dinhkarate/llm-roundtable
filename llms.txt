@@ -1,0 +1,28 @@
+# llm-roundtable
+
+> llm-roundtable is an open-source multi-LLM council for autonomous AI coding agents, packaged as an Agent Skill plus one stdlib-only Python script (MIT). When an agent would stop and ask its user to choose, approve or review something, it convenes six models from five vendors (Claude Fable 5.1, Claude Opus 5.5, GPT-6.1 via Codex CLI, Grok 4.7, Gemini 3.8 Flash via Antigravity, and the newest free OpenCode model). Members answer blind, cross-examine each other anonymously (M1..Mn), rate each other's evidence 0-2, and vote. The verdict is a weighted vote, not a chairman model's summary.
+
+Key facts:
+- Install: `npx skills add dinhkarate/llm-roundtable --skill llm-roundtable` (skill for every agent) or `npx llm-roundtable` (CLI).
+- Uses the official CLIs (claude, codex, grok, agy, opencode) and their subscriptions; no API keys, no MCP server.
+- Hosts: Claude Code, Codex CLI, Grok CLI, Antigravity, OpenCode, pi, or any agent with a shell.
+- Vote weight = seat weight × (0.5 + 0.5 × mean peer evidence rating). Ballots without a sourced FACT or INFERENCE do not count.
+- Ties go to the Fable seat; fewer than 2 valid ballots = NO QUORUM; TIE or NO QUORUM falls back to the user's safe `--default`.
+- Each seat falls back one model level in the same family, then is marked UNATTENDED; the council never blocks.
+- Seats are read-only and sandboxed, publishing tools are removed, and the workspace is fingerprinted before and after (a change makes the run TAINTED).
+- Review mode (`--mode review --workspace .`) approves or rejects plans, diffs and pull requests: APPROVE / CHANGES / REJECT.
+- Output: `~/.roundtable/runs/<time>-<slug>/decision.md` and `result.json`; the last line is `VERDICT: <option|NONE> (council|tiebreak|default|none)`.
+- Typical run: about 12 model calls, 5-20 minutes.
+
+## Docs
+
+- [README](https://github.com/dinhkarate/llm-roundtable/blob/main/README.md): overview, quick start, comparison with karpathy/llm-council, council-of-high-intelligence and Zen MCP, FAQ
+- [SKILL.md](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/SKILL.md): what the host agent does (brief, run, act on the verdict)
+- [Protocol](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/references/protocol.md): rounds, prompts, evidence rules, maths, sandboxing
+- [Hosts](https://github.com/dinhkarate/llm-roundtable/blob/main/skills/llm-roundtable/references/hosts.md): per-host setup, single-tool presets, adding a new CLI via JSON
+- [Research](https://github.com/dinhkarate/llm-roundtable/blob/main/docs/research.md): prior art, papers (Debate or Vote, NeurIPS 2025; When Identity Skews Debate, ACL 2026), CLI quirks, self-review runs
+
+## Optional
+
+- [Example decision.md](https://github.com/dinhkarate/llm-roundtable/blob/main/docs/example-decision.md)
+- [Vietnamese README](https://github.com/dinhkarate/llm-roundtable/blob/main/README.vi.md)

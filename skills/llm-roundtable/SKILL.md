@@ -43,7 +43,7 @@ change"). It is what happens when the council cannot decide; nobody is there to 
 - Neutral wording: do not reveal which option you or the user prefer.
 - **Privacy gate.** The brief goes to Anthropic, OpenAI, xAI, Google and an OpenCode free provider
   (free models may train on prompts). Never include secrets (the script blocks obvious ones),
-  customer data or employer-confidential material. For company work (e.g. EONSR) use `--private`
+  customer data or employer-confidential material. For company work use `--private`
   (drops seats that may train on data) and anonymize; if it still cannot leave the machine,
   do not run a council.
 - Approval of a plan / diff / PR: use `--mode review` (options APPROVE / CHANGES / REJECT) and

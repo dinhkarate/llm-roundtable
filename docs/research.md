@@ -1,124 +1,128 @@
-# Nghiên cứu: hội đồng AI ra quyết định (roundtable)
+# Research: a decision council of AI models
 
-Ngày: 2026-10-13 · Người làm: Claude (Opus 5.5) trong phiên Orca Claude
+[Tiếng Việt](research.vi.md) · Started 2026-10-13 by Claude (Opus 5.5) in an Orca session; kept up to date as the project changes.
 
-## 1. Đã có ai làm chưa?
+## 1. Prior art
 
-Có. Ý tưởng "nhiều model cùng trả lời, chấm nhau, rồi tổng hợp/bỏ phiếu" là chủ đề rất đông người làm.
-Không dự án nào khớp cùng lúc mọi yêu cầu của mình: subscription CLI thay vì API key, đủ 5 hãng,
-fallback đúng một cấp rồi báo unattended, phiếu có trọng số dựa trên bằng chứng, hoà thì Fable quyết,
-và chạy được từ bất kỳ agent nào.
+"Several models answer, grade each other, then synthesise or vote" is a crowded idea. No existing project
+combined everything this one needed: CLI subscriptions instead of API keys, five vendors, a strict
+one-level fallback followed by UNATTENDED, votes weighted by peer-rated evidence, a fixed tie-breaker,
+and a skill that runs from any agent host.
 
-| Dự án | Cách gọi model | Cơ chế | Khác/thiếu so với mình |
+| Project | How it calls models | Mechanism | What it lacks for this use |
 |---|---|---|---|
-| karpathy/llm-council | OpenRouter API | trả lời → chấm ẩn danh (Response A/B) → Chairman tổng hợp | web app, cần API key; Chairman tổng hợp chứ không bỏ phiếu |
-| 0xNyk/council-of-high-intelligence (~2.8k★, CC0) | subagent Claude + `codex exec`, `gemini -p`, ollama, cursor-agent | 18 "nhân vật", 3 vòng (phân tích độc lập → chất vấn → lập trường cuối), nhãn FACT/INFERENCE/ASSUMPTION, đếm phiếu có trọng số (v1.1) | gần nhất; nặng về persona, không fallback theo họ model, không có Grok/agy/OpenCode free, khi lỗi thì quay về host |
-| Max-aiutopia/llm-council (MIT, mới) | `codex`, `agy`, `grok` (subscription) | hỏi song song trong thư mục rỗng, privacy gate, Claude viết quyết định | không có vòng phản biện, không bỏ phiếu; Claude tự phán |
-| BeehiveInnovations zen/PAL MCP | API nhiều provider; `clink` gọi CLI khác | tool `consensus`, hội thoại nhiều model | là MCP server (phải cài vào từng host), không có luật phiếu/hoà |
-| hex claude-council, xrf9268 llm-council-plugin, sherifkozman/llm-council, polyclaude, design-council, maestro, gavel, frahlg/fusion, openfusion | API hoặc CLI | song song + tổng hợp / debate theo vai / judge + synthesizer | phần lớn chỉ cho Claude Code; tổng hợp bằng judge, không bỏ phiếu theo bằng chứng |
+| [karpathy/llm-council](https://github.com/karpathy/llm-council) | OpenRouter API | answer → anonymous ranking (Response A/B) → chairman synthesises | web app, needs an API key; a chairman writes the answer instead of a vote |
+| [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) (~2.8k★, CC0) | Claude subagents + `codex exec`, `gemini -p`, ollama, cursor-agent | 18 personas, 3 rounds (independent → cross-exam → final), FACT/INFERENCE/ASSUMPTION labels, weighted count (v1.1) | closest match; persona-heavy, no per-family fallback, no Grok/agy/OpenCode free, falls back to the host on errors |
+| [Max-aiutopia/llm-council](https://github.com/Max-aiutopia/llm-council) (MIT) | `codex`, `agy`, `grok` (subscriptions) | parallel answers in an empty directory, privacy gate, Claude writes the decision | no cross-exam, no vote; Claude decides alone |
+| [BeehiveInnovations zen / PAL MCP](https://github.com/BeehiveInnovations/zen-mcp-server) | provider APIs; `clink` calls other CLIs | `consensus` tool, multi-model conversation | an MCP server installed per host; no vote or tie rule |
+| npm [`roundtable`](https://github.com/umutc/roundtable), [`roundtable-cli`](https://github.com/vladagurets/roundtable) | Claude Code agents / local CLIs | debate, moderator synthesises | single vendor or no evidence-weighted vote |
+| hex claude-council, xrf9268 llm-council-plugin, sherifkozman/llm-council, polyclaude, design-council, maestro, gavel, frahlg/fusion, openfusion | APIs or CLIs | parallel + synthesis, role debate, judge + synthesiser | mostly Claude Code only; a judge synthesises instead of an evidence-based vote |
 
-Kết luận: **không cần fork**. Mượn ba ý đã được kiểm chứng (vòng đầu độc lập, chấm ẩn danh, nhãn bằng chứng)
-và tự viết phần riêng: fallback một cấp, unattended, trọng số theo điểm bằng chứng do các thành viên
-khác chấm, Fable phá hoà, chạy được trên mọi host.
+Conclusion: **no fork.** Borrow three proven ideas (independent first round, anonymous review, evidence
+labels) and write the rest: one-level fallback, UNATTENDED seats, weights from peer-rated evidence, Fable
+as tie-breaker, any host.
 
-## 2. Nghiên cứu nói gì về debate/vote
+## 2. What the literature says about debate and voting
 
-1. **Debate or Vote** (Choi, Zhu, Li, NeurIPS 2025): phần lớn lợi ích của multi-agent debate đến từ
-   *bỏ phiếu đa số*; debate thuần không làm tăng xác suất đúng kỳ vọng (quá trình niềm tin là martingale).
-   Can thiệp có chủ đích, đẩy cập nhật niềm tin về phía sửa sai, thì có ích.
-   → Giữ vòng 1 độc lập + bỏ phiếu; chỉ 1 vòng chất vấn mặc định, và vòng đó buộc dựa trên bằng chứng
-   ("số phiếu không phải bằng chứng; chỉ đổi phiếu khi một bằng chứng cụ thể buộc phải đổi").
-2. **When Identity Skews Debate** (ACL 2026): trong debate có sycophancy (chiều theo bạn) và self-bias
-   (bênh mình); ẩn danh câu trả lời làm giảm cả hai. → Vòng chất vấn gọi bằng M1..Mn, xáo thứ tự,
-   phiên mới mỗi vòng nên model thật sự không biết đâu là câu của mình; điểm tự chấm bị bỏ.
-3. **Đội cùng họ model** (CAIS 2026): dễ chạy theo số đông (đến 85.5% chấp nhận đáp án đa số),
-   sụp về đồng thuận, tốn token gấp 2-3 lần tự sửa. → Mặc định mỗi họ model một ghế; preset "solo-*"
-   có cảnh báo và khuyên thêm OpenCode để có hãng khác.
-4. Karpathy kể các model trong llm-council thường khen GPT và chê Claude, và đôi khi lệch với đánh giá
-   của chính ông. → Không cho một "chairman" model tự tổng hợp/phán quyết; phán quyết là phép tính
-   trên phiếu, host chỉ tường thuật.
+1. **Debate or Vote** (Choi, Zhu, Li, NeurIPS 2025): most of the benefit of multi-agent debate comes from
+   *majority voting*; debate by itself does not raise expected correctness (the belief process is a
+   martingale). Targeted interventions that push updates toward correction do help.
+   → Keep an independent round 1 and a vote; only one cross-exam round by default, and it is bound to
+   evidence ("vote counts are not evidence; change your vote only when a specific piece of evidence forces it").
+2. **When Identity Skews Debate** (ACL 2026): debaters show sycophancy (siding with peers) and self-bias
+   (defending their own answer); anonymising answers reduces both. → Cross-exam uses M1..Mn, shuffled,
+   in a new session each round, so a model really cannot tell which answer was its own; self-ratings are dropped.
+3. **Homogeneous teams** (CAIS 2026): agents of one model family follow the majority (up to 85.5% accept
+   the majority answer), collapse into consensus and cost 2-3× the tokens of self-correction. → One seat
+   per model family by default; the `solo-*` presets warn and recommend adding OpenCode for another vendor.
+4. Karpathy reports that models in llm-council tended to praise GPT and criticise Claude, sometimes against
+   his own judgement. → No chairman model writes or judges the result; the verdict is arithmetic on
+   ballots and the host only reports it.
 
-## 3. Thiết kế đã chọn
+## 3. Design
 
-- **Một script Python thuần (stdlib, 3.9+) + SKILL.md chuẩn Agent Skills.** Host nào có shell
-  (Claude Code, Codex, Grok CLI, Antigravity, OpenCode, pi) đều chạy được; không cần MCP, không cần Orca.
-  Cài qua `npx skills` như các skill khác.
-- **Mỗi ghế = một process CLI headless, read-only, phiên mới**, chạy trong thư mục rỗng (mặc định) hoặc
-  đọc repo khi có `--workspace`. Adapter khai báo bằng JSON nên thêm CLI mới (qwen, cursor-agent, pi...)
-  không phải sửa code.
-- **Ghế mặc định**: fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`, grok `grok-4.7`,
-  gemini `gemini-3.8-flash-high` (qua agy), opencode = model free mới nhất khác họ với các ghế còn lại.
-  6 ghế, số chẵn, nên luật "hoà thì Fable" có tác dụng thật.
-- **Fallback một cấp**, rồi UNATTENDED (đúng yêu cầu). Fallback trùng primary của ghế khác bị bỏ.
-- **Phiếu**: cần ít nhất một bằng chứng FACT/INFERENCE, nếu không thì phiếu không được tính.
-  Trọng số = weight ghế × (0.5 + 0.5 × điểm bằng chứng trung bình do các ghế khác chấm, 0-2).
-  Thắng = điểm có trọng số cao nhất; hoà → lựa chọn của Fable; Fable không nằm trong nhóm hoà → TIE, hỏi user.
-  Dưới 2 phiếu hợp lệ → NO QUORUM. `decision_rule: "count"` để đổi sang đếm phiếu thuần.
-- **An toàn**: chặn brief có dạng secret; `--private` bỏ ghế có thể train trên prompt (OpenCode free);
-  `ROUNDTABLE_SEAT` chặn ghế tự mở hội đồng lồng nhau; host không được "sửa" kết quả.
+- **One pure Python script (stdlib, 3.9+) plus an Agent Skills `SKILL.md`.** Any host with a shell
+  (Claude Code, Codex, Grok CLI, Antigravity, OpenCode, pi) can run it; no MCP, no Orca required.
+  Installed with `npx skills` like any other skill, or run through the `llm-roundtable` npm wrapper.
+- **Each seat is a headless, read-only CLI process with a fresh session**, in an empty temp directory
+  (default) or reading the repo with `--workspace`. Adapters are JSON, so a new CLI (qwen, cursor-agent,
+  pi...) needs no code change.
+- **Default seats:** fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`, grok `grok-4.7`,
+  gemini `gemini-3.8-flash-high` (via agy), opencode = the newest free model from a family not already
+  seated. Six seats, an even number, so "ties go to Fable" actually matters.
+- **One-level fallback**, then UNATTENDED. A fallback that equals another seat's primary is skipped.
+- **Votes:** at least one FACT or INFERENCE item with a source, otherwise the ballot does not count.
+  Weight = seat weight × (0.5 + 0.5 × mean evidence rating from the other seats, 0-2). Highest weighted
+  score wins; tie → Fable's choice; Fable outside the tied group → TIE. Fewer than 2 valid ballots →
+  NO QUORUM. TIE / NO QUORUM → `--default`. `decision_rule: "count"` switches to a plain count.
+- **Safety:** secret-looking briefs are blocked; `--private` drops seats that may train on prompts
+  (OpenCode free); `ROUNDTABLE_SEAT` stops nested councils; the host may not "fix" the result.
 
-## 4. Kiểm chứng trên máy này (2026-10-13)
+## 4. Field notes
 
-`roundtable.py doctor --probe`:
+`roundtable.py doctor --probe` on the author's machine (2026-10-13):
 
-| Ghế | Primary | Fallback |
+| Seat | Primary | Fallback |
 |---|---|---|
 | fable | claude-fable-5-1 ok | claude-fable-5 ok |
 | opus | claude-opus-5-5 ok | claude-opus-5 ok |
 | codex | gpt-6.1-sol ok | gpt-6-sol ok |
 | grok | grok-4.7 ok | grok-4.6 ok |
-| gemini (agy 1.3.4) | gemini-3.8-flash-high ok | gemini-3.7-flash-high **không có trong agy** → khi 3.8 hết quota, ghế này UNATTENDED |
-| opencode | opencode/cat-jam-free ok (2026-10-12) | opencode/exo-free **đã deprecated** → đã tự ghi vào dead-models |
+| gemini (agy 1.3.4) | gemini-3.8-flash-high ok | gemini-3.7-flash-high **not offered by agy** → when 3.8 is out of quota the seat is UNATTENDED |
+| opencode | opencode/cat-jam-free ok (2026-10-12) | opencode/exo-free **deprecated** → recorded in dead-models automatically |
 
-Ghi chú CLI rút ra khi thử:
-- `opencode run` treo nếu stdin không đóng → script luôn đưa `/dev/null`.
-- `agy --mode plan` ở chế độ print chờ duyệt plan rồi bị huỷ → dùng `--sandbox --disable-slash-commands`.
-- `grok -p` bị lấy làm prompt nếu đứng trước cờ khác → dùng `--prompt-file`.
-- models.dev trả 403 nếu không có User-Agent → script gửi UA và cache 1 ngày.
-- grok-4.7 từ chối prompt kiểu "reply with exactly ..." → probe dùng câu hỏi thật.
-- `opencode models` đôi khi trả rỗng khi service nền đang khởi động → thử lại với `--standalone`.
-- agy headless tự từ chối `read_url` (không có ai để hỏi quyền) và trả rỗng ở vòng chất vấn → chạy
-  `--sandbox --dangerously-skip-permissions`; bù lại, script so `git status`/`git diff` của workspace
-  trước và sau, có thay đổi thì in WARNING trong decision.md.
-- grok-4.7 có lúc chỉ nói "tôi sẽ đọc file trước…" rồi kết thúc lượt → mọi ghế trả lời không có phiếu
-  sẽ được gọi lại đúng một lần với lời nhắc phải in phiếu JSON (không tính là fallback).
-- `--out` tương đối làm grok không thấy prompt file (cwd khác) → mọi đường dẫn đều resolve tuyệt đối.
-- Laptop gập nắp chạy pin (run4, 2026-10-13 18:02-20:00): máy liên tục Maintenance Sleep, ghế treo vì mất
-  mạng, còn timeout không kích hoạt vì `communicate(timeout)` dùng đồng hồ monotonic (đứng yên khi ngủ) →
-  deadline theo giờ thực, log "host slept Ns", `caffeinate -i -s` trong lúc chạy (không chặn được gập nắp khi chạy pin).
-- SIGTERM với `sys.exit` làm worker thread thấy ghế chết và tự gọi model fallback → cờ dừng + `os._exit`.
-- OpenCode in nội dung file đã đọc ra stderr; một file có chữ "quota" làm lỗi mạng bị xếp nhầm thành
-  hết quota → chỉ dò 15 dòng cuối.
+CLI quirks found while building it (read these before touching an adapter):
 
-Phiên thật đầu tiên (brief: skill này nên nằm ở repo riêng hay trong pi-skill) → 4/4 phiếu hợp lệ chọn
-repo riêng; Fable/Opus/Codex dẫn README vercel-labs/skills và tài liệu GitHub Actions làm bằng chứng.
+- `opencode run` hangs if stdin stays open → the script always passes `/dev/null`.
+- `agy --mode plan` in print mode waits for plan approval and is cancelled → `--sandbox --disable-slash-commands`.
+  Not `--dangerously-skip-permissions`: it can lift the sandbox (agy issue #36). Headless agy therefore
+  denies prompt-gated tools such as `read_url`, and with `--workspace` it reads a snapshot copy, never the real checkout.
+- `grok -p` swallows the next flag as the prompt when it comes first → `--prompt-file`.
+- models.dev returns 403 without a User-Agent → the script sends one and caches for a day.
+- grok-4.7 refuses "reply with exactly ..." prompts → probes ask a real question.
+- `opencode models` sometimes returns nothing while its background service starts → retry with `--standalone`.
+- grok-4.7 sometimes says "I'll read the files first..." and ends its turn → any seat that returns no
+  ballot is re-asked exactly once to print the JSON ballot (not counted as a fallback).
+- A relative `--out` made grok miss its prompt file (different cwd) → every path is resolved absolute.
+- Laptop lid closed on battery (run 4, 2026-10-13 18:02-20:00): the machine kept entering Maintenance
+  Sleep, seats hung without network, and timeouts never fired because `communicate(timeout)` uses the
+  monotonic clock (frozen during sleep) → wall-clock deadlines, a "host slept Ns" log line, and
+  `caffeinate -i -s` during the run (which cannot prevent lid-close sleep on battery).
+- SIGTERM with `sys.exit` let worker threads see dead seats and start fallback models → a stop flag plus `os._exit`.
+- OpenCode prints files it read to stderr; one file containing the word "quota" turned a network error
+  into "out of quota" → only the last 15 lines are matched.
+- Plan modes inject "spawn agents, ExitPlanMode" instructions into claude and end grok's headless runs
+  before the ballot → neither CLI runs in plan mode; read-only comes from allowlists and sandboxes.
+- Codex ships 100+ `codex_apps` tools (deploy sites, share pages, Datadog) plus computer use, and claude
+  may load MCP servers that publish externally → all of these are disabled for council seats.
 
-### Hội đồng tự review chính nó (`--mode review --workspace <repo>`)
+The first real council (brief: should this skill live in its own repo or inside the author's skill
+monorepo?) → 4/4 valid ballots chose its own repo; Fable, Opus and Codex cited the vercel-labs/skills
+README and the GitHub Actions docs as evidence.
 
-| Lần | Commit | Phiếu hợp lệ | Kết quả | Hội đồng tìm ra (đều có tái hiện bằng lệnh) |
+### The council reviews itself (`--mode review --workspace <repo>`)
+
+| Run | Commit | Valid ballots | Verdict | What the council found (each with a reproducing command) |
 |---|---|---|---|---|
-| run2 | 86d73a5 | 5/6 (grok invalid) | CHANGES 5/5 | plan mode của claude nhồi lệnh "spawn agent/ExitPlanMode"; luật count bỏ qua điểm khi hoà; ratings dạng list làm sập cả phiên; FACT không nguồn vẫn được tính; parser nhặt object lồng; status kẹt RUNNING; tally mất cờ workspace |
-| run3 | b53803e | 6/6 | CHANGES 6/6 | status báo DONE của phiên cũ khi phiên mới đang khởi động; allowlist claude cho chạy code (`unittest`, `rg --pre`, `git diff --output`); agy chỉ read-only bằng prompt; sandbox nằm trong thư mục run nên đọc được bảng label (phá ẩn danh); ratings áp lên phiếu đã đổi phe; INFERENCE không nguồn; Dissent sai khi TIE; `fill()` thay lồng; không dọn tiến trình khi bị kill |
+| run2 | 86d73a5 | 5/6 (grok invalid) | CHANGES 5/5 | claude plan mode injected "spawn agent / ExitPlanMode"; the count rule ignored scores on ties; list-shaped ratings crashed the run; unsourced FACTs still counted; the parser picked nested objects; `status` stuck at RUNNING; the tally lost the workspace flag |
+| run3 | b53803e | 6/6 | CHANGES 6/6 | `status` reported an old run's DONE while a new one was starting; the claude allowlist allowed code execution (`unittest`, `rg --pre`, `git diff --output`); agy was read-only only by prompt; the sandbox inside the run dir exposed the label table (breaking anonymity); ratings applied to ballots that had switched sides; unsourced INFERENCE; wrong dissent on TIE; `fill()` replaced nested placeholders; processes not cleaned up when killed |
+| run5 | dae30ee | 5/6 (gemini unattended, quota) | CHANGES 5/5 | ballots read from stderr or echoed tool output; a tainted workspace still produced a verdict; agy's `--dangerously-skip-permissions` could lift its sandbox; seats inherited unrelated credentials; invalid ballots could rate peers (fixed in 85dc1e2) |
 
-Ngoài lỗi code, chính lúc chạy thật mới lộ ra: codex mặc định có hơn 100 tool `codex_apps`
-(deploy site, chia sẻ trang, Datadog) cùng computer use, còn claude có MCP đăng bài ra ngoài
-(glasshelf, Claude Docs). Ghế hội đồng giờ bị tắt hết các tool này.
+## 5. Open work
 
-## 5. Việc còn mở
+- Orca transport: each seat as its own Orca agent terminal (visible TUIs, seats on other machines).
+- Remote seats over SSH: an adapter like `ssh host claude -p ...`.
+- Compare the `count` and `weighted` rules on a question set with known answers, and pick the default from data.
 
-- Orca transport: mỗi ghế là một terminal agent trong Orca (xem được TUI, chạy được ghế trên máy khác).
-- Ghế remote (sanrokyu-chan, Windows) qua SSH: adapter `ssh host claude -p ...`.
-- Thử luật `count` vs `weighted` trên một bộ câu hỏi có đáp án để chọn mặc định bằng số liệu.
+## Sources
 
-## Nguồn
-
-- [karpathy/llm-council](https://github.com/karpathy/llm-council) · [giải thích (Analytics Vidhya)](https://www.analyticsvidhya.com/blog/2025/12/llm-council-by-andrej-karpathy/)
-- [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) · [bài giới thiệu](https://explainx.ai/blog/council-of-high-intelligence-multi-llm-deliberation-claude-code-2026)
+- [karpathy/llm-council](https://github.com/karpathy/llm-council) · [explainer (Analytics Vidhya)](https://www.analyticsvidhya.com/blog/2025/12/llm-council-by-andrej-karpathy/)
+- [0xNyk/council-of-high-intelligence](https://github.com/0xNyk/council-of-high-intelligence) · [write-up](https://explainx.ai/blog/council-of-high-intelligence-multi-llm-deliberation-claude-code-2026)
 - [Max-aiutopia/llm-council](https://github.com/Max-aiutopia/llm-council)
-- [So sánh các plugin council cho Claude Code](https://www.claudepluginhub.com/blog/claude-council-plugins-compared)
-- [Zen/PAL MCP server](https://mcpservers.org/de/servers/BeehiveInnovations/zen-mcp-server)
+- [Claude Code council plugins compared](https://www.claudepluginhub.com/blog/claude-council-plugins-compared)
+- [Zen / PAL MCP server](https://mcpservers.org/de/servers/BeehiveInnovations/zen-mcp-server)
 - [Debate or Vote (arXiv 2508.17536)](https://arxiv.org/abs/2508.17536v1) · [NeurIPS 2025](https://neurips.cc/virtual/2025/poster/116557)
 - [When Identity Skews Debate (arXiv 2510.07517)](https://arxiv.org/abs/2510.07517) · [ACL 2026](https://preview.aclanthology.org/ingest-acl/2026.acl-long.650/)
-- [Decomposing sycophancy … homogeneous multi-agent (CAIS 2026)](https://caisconf.org/program/2026/papers/decomposing-sycophancy-fragility-consensus-collapse-and-cost-in-homogeneous-mult/)
+- [Decomposing sycophancy, fragility, consensus collapse and cost in homogeneous multi-agent teams (CAIS 2026)](https://caisconf.org/program/2026/papers/decomposing-sycophancy-fragility-consensus-collapse-and-cost-in-homogeneous-mult/)
 - [Debate diversity collapse (blog)](https://tianpan.co/blog/2026/04/26/debate-diversity-collapse-multi-agent-ensemble)
-- [models.dev](https://models.dev) (ngày phát hành model OpenCode)
+- [models.dev](https://models.dev) (OpenCode model release dates)
