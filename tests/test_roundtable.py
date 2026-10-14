@@ -72,6 +72,13 @@ class ParseTest(unittest.TestCase):
         self.assertNotIn("AWS_SECRET_ACCESS_KEY", env)
         self.assertEqual((env["ANTHROPIC_API_KEY"], env["PATH_EXTRA"], env["ROUNDTABLE_SEAT"]), ("y", "p", "s"))
 
+    def test_seat_env_pwd_follows_seat_cwd(self):
+        # opencode resolves its project from $PWD; an inherited PWD let it work in the caller's checkout
+        os.environ.update(PWD="/caller/checkout", OLDPWD="/elsewhere")
+        env = rt.seat_env("s", "/tmp/seat-sandbox")
+        self.assertEqual(env["PWD"], "/tmp/seat-sandbox")
+        self.assertNotIn("OLDPWD", env)
+
     def test_classify_quota_and_unavailable(self):
         q = rt.classify({"rc": 1, "text": "", "noise": "Error: rate limit exceeded"}, ["A", "B"])
         u = rt.classify({"rc": 1, "text": "", "noise": "Couldn't set model: unknown model id"}, ["A", "B"])

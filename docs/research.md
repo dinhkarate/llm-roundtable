@@ -93,6 +93,11 @@ CLI quirks found while building it (read these before touching an adapter):
   into "out of quota" → only the last 15 lines are matched.
 - Plan modes inject "spawn agents, ExitPlanMode" instructions into claude and end grok's headless runs
   before the ballot → neither CLI runs in plan mode; read-only comes from allowlists and sandboxes.
+- The opencode seat ran its shell commands in the *caller's* directory: opencode takes its project from `$PWD`,
+  which seats inherited (2026-10-14 v0.2 councils: it listed the other briefs and the batch script) → seats get
+  `PWD` set to their sandbox. opencode's `plan` agent can still run shell commands; config-level denies are
+  ignored because `opencode run` talks to an already-running background service, and `--standalone` refuses
+  free models. Treat the opencode seat as able to read the machine; `--private` drops it.
 - Codex kills every process a shell tool call started when the call returns, so `nohup ... &` from a Codex host
   never finished a council (2026-10-14 host test) → `run --detach` double-forks into its own session.
 - `status` used to end at `DONE` without the verdict, so host agents re-ran `tally` to read it → `status` now

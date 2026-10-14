@@ -236,11 +236,14 @@ SECRET_ENV_RE = re.compile(r"TOKEN|SECRET|PASSW|API_?KEY|PRIVATE|CREDENTIAL|AUTH
 SEAT_AUTH_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "XAI_", "GROK_", "GEMINI_", "GOOGLE_", "OPENCODE_", "AGY_")
 
 
-def seat_env(seat_id):
-    """The parent environment minus credentials the seat's own CLI does not need (GH_TOKEN, cloud keys, ...)."""
+def seat_env(seat_id, cwd=None):
+    """The parent environment minus credentials the seat's own CLI does not need (GH_TOKEN, cloud keys, ...).
+    PWD follows the seat's cwd: opencode takes its project directory from $PWD, not from the real cwd."""
     env = {k: v for k, v in os.environ.items()
-           if not SECRET_ENV_RE.search(k) or k.startswith(SEAT_AUTH_PREFIXES)}
+           if (not SECRET_ENV_RE.search(k) or k.startswith(SEAT_AUTH_PREFIXES)) and k != "OLDPWD"}
     env.update(ROUNDTABLE_SEAT=seat_id, NO_COLOR="1")
+    if cwd is not None:
+        env["PWD"] = str(cwd)
     return env
 
 
@@ -266,7 +269,7 @@ def call_cli(adapter, model, prompt, seat_dir, cwd, timeout, seat_id):
         return {"status": "missing", "detail": "%s not on PATH" % adapter["bin"], "text": ""}
     values = {"model": model, "prompt": prompt, "prompt_file": str(prompt_file), "out_file": str(out_file)}
     argv = [exe] + [fill(a, values) for a in adapter["argv"]]
-    env = seat_env(seat_id)
+    env = seat_env(seat_id, cwd)
     start, mono = time.time(), time.monotonic()
     stdin = open(prompt_file, encoding="utf-8") if adapter.get("stdin") else subprocess.DEVNULL
     kw = {"start_new_session": True} if os.name != "nt" else {}

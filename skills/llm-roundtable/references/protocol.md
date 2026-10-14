@@ -13,7 +13,7 @@
   | codex | `-s read-only` sandbox (kernel) | `--disable apps computer_use browser_use` |
   | grok | `--sandbox read-only` (kernel; temp dirs stay writable) | no MCP configured |
   | agy | `--sandbox` without `--dangerously-skip-permissions` (that flag can lift the sandbox, agy issue #36; headless then denies prompt-gated tools like read_url) and `"isolate": true`: with `--workspace` it works in a snapshot copy of the checkout's tracked + untracked files | no MCP configured |
-  | opencode | `--agent plan` | no MCP configured |
+  | opencode | `--agent plan` and `PWD` set to its sandbox; **not** a sandbox: its background service can still run shell commands anywhere (`--private` drops this seat) | no MCP configured |
 
   Plan modes are avoided on claude and grok: they inject "write a plan, exit plan mode" instructions
   and end headless runs before the ballot. Each call gets `ROUNDTABLE_SEAT=<id>` so a seat that loads
