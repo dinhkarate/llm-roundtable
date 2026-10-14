@@ -23,7 +23,9 @@ làm theo phán quyết và để lại vết (PR, issue, commit) cho bạn đ�
 - **Dùng subscription sẵn có**: gọi CLI `claude`, `codex`, `grok`, `agy`, `opencode`. Không cần API key, không cần MCP.
 - **Không có bằng chứng thì phiếu không được tính**: phải có ít nhất một `FACT`/`INFERENCE` có nguồn; các ghế khác chấm bằng chứng 0-2, điểm này nhân vào trọng số.
 - **Chất vấn ẩn danh**: vòng 2 thấy lập trường dưới tên M1..Mn, xáo thứ tự, phiên mới, nên không model nào nhận ra câu của mình.
-- **An toàn**: ghế chỉ đọc (sandbox kernel hoặc allowlist), tắt tool đăng ra ngoài, bỏ credential không liên quan, so workspace trước/sau.
+- **An toàn**: ghế chỉ đọc (sandbox kernel hoặc allowlist), tắt tool đăng ra ngoài, bỏ credential không liên quan, so workspace sau mỗi vòng; ghế claude không nhận hook hay memory của bạn (`--restricted`).
+- **Khó bị dắt mũi**: file và câu trả lời của ghế khác chỉ là dữ liệu: lập trường vòng 2 nằm trong rào có nonce riêng mỗi prompt, ghế báo lại chỗ có prompt injection, và trích `file:line` không có trong repo thì không còn được tính là FACT.
+- **Đo được**: mỗi lần chạy ghi số lần gọi CLI, thời gian và số token từng CLI dùng.
 - **Không bao giờ treo**: fallback đúng một cấp rồi UNATTENDED; hoà thì Fable quyết; không quyết được thì lấy `--default` an toàn.
 - **Chạy ở mọi nơi có shell**: Claude Code, Codex CLI, Grok CLI, Antigravity, OpenCode, pi. Python 3.9+ chỉ dùng stdlib.
 
@@ -32,6 +34,9 @@ làm theo phán quyết và để lại vết (PR, issue, commit) cho bạn đ�
 ```bash
 npx skills add dinhkarate/llm-roundtable --skill llm-roundtable   # skill cho mọi agent trên máy
 npx llm-roundtable doctor --probe                                 # ghế nào ngồi được, model nào còn quota
+# Chỉ dùng Claude Code: cài dạng plugin (chọn cách này hoặc npx skills, đừng cả hai)
+#   /plugin marketplace add dinhkarate/llm-roundtable
+#   /plugin install llm-roundtable@llm-roundtable
 ```
 
 ## Dùng
@@ -43,7 +48,11 @@ npx llm-roundtable run --brief q.md --seats duo                   # chỉ Fable 
 npx llm-roundtable run --brief brief.md --default C --dry-run     # kiểm tra trước: ghế, quorum, giới hạn số lần gọi/thời gian (JSON), không gọi model
 npx llm-roundtable status                                         # tiến độ lần chạy mới nhất
 npx llm-roundtable status --json <thư-mục-run>                     # trạng thái, phán quyết và các cờ dạng JSON cho agent
+npx llm-roundtable run --brief brief.md --default C --early-stop  # vòng 1 nhất trí (≥3 phiếu hợp lệ, ≥2 hãng) thì bỏ vòng chất vấn
 ```
+
+Brief mẫu để chép: [`references/briefs/`](skills/llm-roundtable/references/briefs/) (chọn công nghệ, migration, nâng
+dependency, ship hay hoãn, review PR).
 
 Kết quả ở `~/.roundtable/runs/<thời gian>-<slug>/decision.md` (+ `result.json`, transcript từng vòng).
 Dòng cuối luôn là `VERDICT: <option|NONE> (council|tiebreak|default|none)`.
@@ -59,7 +68,9 @@ chạy nền, theo dõi và làm theo phán quyết. Gọi tay bằng `/llm-roun
 - `--min-margin 2/3` (tuỳ chọn): phương án thắng chiếm dưới tỉ lệ đó của tổng trọng số hợp lệ thì coi như hoà và lấy `--default`; lựa chọn của hội đồng vẫn được ghi ở `council_verdict`. `0.67` loại kết quả 4-2 trên sáu ghế, `2/3` thì giữ.
 - `UNKNOWN` là câu hỏi còn bỏ ngỏ, không bao giờ được tính là bằng chứng; `decision.md` liệt kê chúng ở "Unresolved questions", cùng "Kill criteria" (dấu hiệu cần xem lại quyết định) của phía thắng.
 - Vòng 1 mỗi ghế nhắc lại câu hỏi và có thể nêu một phương án bị bỏ sót; từ max(2, nửa số ghế hợp lệ) trở lên thì có cảnh báo "framing concern", chỉ để tham khảo, không đổi phiếu.
-- `decision.md` có mục "Usage": số lần gọi CLI, nudge, fallback, thời gian từng vòng. `--deadline` giới hạn thời gian cả lần chạy.
+- `decision.md` có mục "Usage": số lần gọi CLI, nudge, fallback, thời gian từng vòng và token từng ghế (theo số CLI tự báo). `--deadline` giới hạn thời gian cả lần chạy.
+- Giới hạn cấp tài khoản (Claude hết session/weekly limit, tài khoản bị khoá) thì không fallback: cùng tài khoản thì model khác cũng hỏng y vậy.
+- `--early-stop` (tuỳ chọn, mặc định tắt): vòng 1 nhất trí, đủ ≥ max(quorum, 3) phiếu hợp lệ từ ≥ 2 CLI khác hãng, không có framing concern hay báo injection thì bỏ vòng 2. Không bao giờ áp dụng cho chế độ review.
 - Hội đồng chỉ chọn giữa các việc agent đã được phép làm; không bao giờ cấp quyền push, deploy, xoá dữ liệu hay tiêu tiền.
 
 Chi tiết: [`protocol.md`](skills/llm-roundtable/references/protocol.md), [`hosts.md`](skills/llm-roundtable/references/hosts.md),

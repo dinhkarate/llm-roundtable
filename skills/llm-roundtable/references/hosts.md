@@ -4,6 +4,11 @@ The council is a plain Python script that shells out to agent CLIs, so it runs f
 agent with a shell tool. Install the skill for every agent with
 `npx skills add dinhkarate/llm-roundtable --skill llm-roundtable` (or through the pi-skill manifest).
 
+Claude Code only, optional: the same skill as a plugin, from this repo's marketplace
+(`/plugin marketplace add dinhkarate/llm-roundtable`, then `/plugin install llm-roundtable@llm-roundtable`).
+It appears as `/llm-roundtable:llm-roundtable`. Install one or the other, not both, or the skill loads twice.
+Unattended agents and CI should use `npx skills add`: it is the same files for every host.
+
 ## Running from each host
 
 Every host starts the council with `--detach`, because a council outlives tool timeouts and some hosts
@@ -38,6 +43,7 @@ Tested 2026-10-14 by asking each CLI, headless, to find the skill and run a `duo
 | Grok CLI | `~/.grok/skills/llm-roundtable` | listed as a skill |
 | OpenCode | `~/.agents/skills/llm-roundtable` | loaded through its Skill tool |
 | Antigravity (agy) | `~/.agents/skills/llm-roundtable` | not listed among agy's skills; agy found it by searching the filesystem |
+| Claude Code plugin | plugin cache, root `skills/llm-roundtable` of this repo | loaded as `llm-roundtable:llm-roundtable` (checked with `--plugin-dir`, 2026-10-14) |
 
 ## Logins each seat needs
 
@@ -46,7 +52,7 @@ Tested 2026-10-14 by asking each CLI, headless, to find the skill and run a `duo
 | fable, opus | `claude` | `claude` (subscription) |
 | codex | `codex` | `codex login` (ChatGPT plan) |
 | grok | `grok` | `grok login` |
-| gemini | `agy` | run `agy` once |
+| gemini | `agy` | run `agy` once (an account the provider has disabled answers 403 PERMISSION_DENIED: the seat is UNATTENDED and skips its fallback) |
 | opencode | `opencode` | none for free models |
 
 Missing CLIs are not errors: those seats become UNATTENDED and the rest still vote.

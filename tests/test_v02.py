@@ -253,7 +253,9 @@ class UsageUnitTest(unittest.TestCase):
         self.assertEqual(rt.seat_max_calls(0, 2), 0)
 
 
-class V02EndToEndTest(unittest.TestCase):
+class E2EBase(unittest.TestCase):
+    """Helpers for end-to-end runs through the CLI with fake seats; no tests of its own."""
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.env = dict(os.environ, ROUNDTABLE_RUNS=str(self.tmp / "runs"))
@@ -282,6 +284,8 @@ class V02EndToEndTest(unittest.TestCase):
     def status(self, run, *flags):
         return subprocess.run([sys.executable, str(SCRIPT), "status", str(run), *flags], capture_output=True, text=True)
 
+
+class V02EndToEndTest(E2EBase):
     # --- usage
     def test_usage_counts_the_pre_nudge_call_and_survives_tally(self):
         self.config([{"id": "lazy", "adapter": "fake", "models": ["lazy-A"]},

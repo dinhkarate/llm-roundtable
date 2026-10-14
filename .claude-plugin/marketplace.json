@@ -1,0 +1,13 @@
+{
+  "name": "llm-roundtable",
+  "owner": {"name": "dinhkarate", "url": "https://github.com/dinhkarate"},
+  "metadata": {"description": "llm-roundtable: a multi-LLM decision council as a Claude Code plugin"},
+  "plugins": [
+    {
+      "name": "llm-roundtable",
+      "source": "./skills/llm-roundtable",
+      "description": "Multi-LLM decision council: several vendor models debate anonymously and cast evidence-weighted votes.",
+      "category": "productivity"
+    }
+  ]
+}

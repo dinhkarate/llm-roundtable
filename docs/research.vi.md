@@ -91,6 +91,18 @@ Ghi chú CLI rút ra khi thử:
 - SIGTERM với `sys.exit` làm worker thread thấy ghế chết và tự gọi model fallback → cờ dừng + `os._exit`.
 - OpenCode in nội dung file đã đọc ra stderr; một file có chữ "quota" làm lỗi mạng bị xếp nhầm thành
   hết quota → chỉ dò 15 dòng cuối.
+- Ghế claude thừa hưởng cấu hình Claude Code của người dùng: hook SessionStart chèn danh sách *tên* secret
+  trong vault, hook UserPromptSubmit chạy, auto-memory được gắn vào (thấy qua `--include-hook-events`,
+  2026-10-14) → ghế claude chạy `--restricted`: bỏ settings user/project/local, không hook, không memory, bớt
+  khoảng 1.4k token đầu vào mỗi lần gọi; lệnh `ls` trong allowlist vẫn chạy.
+- "You've hit your session limit" của claude là giới hạn cả tài khoản: fallback sang `claude-fable-5` cùng tài
+  khoản phí 10 lần gọi trong đợt hội đồng v0.2 → giới hạn cấp tài khoản thì bỏ qua fallback.
+- agy trả `PERMISSION_DENIED (code 403): This service has been disabled in this account for violation of Terms
+  of Service` (2026-10-14, `agy models`) → xếp vào giới hạn cấp tài khoản; không xem được định dạng JSON của agy
+  nên adapter agy giữ dạng text, không có số token.
+- Số token lấy từ đầu ra JSON của từng CLI (`claude --output-format json`, `codex exec --json`,
+  `grok --output-format json`, `opencode run --format json` + `opencode session export <id>`). Một hội đồng thử
+  1 vòng, 4 ghế (2026-10-14) dùng 259k token, 64% là cache read; riêng grok 120k vì nó đọc và tìm kiếm trước khi bỏ phiếu.
 
 Phiên thật đầu tiên (brief: skill này nên nằm ở repo riêng hay trong pi-skill) → 4/4 phiếu hợp lệ chọn
 repo riêng; Fable/Opus/Codex dẫn README vercel-labs/skills và tài liệu GitHub Actions làm bằng chứng.

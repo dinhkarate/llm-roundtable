@@ -44,7 +44,9 @@ computed from the ballots, not written by a "chairman" model, and every run leav
 - **Uses the subscriptions you already have.** It drives the `claude`, `codex`, `grok`, `agy` (Antigravity) and `opencode` CLIs. No API keys, no proxy, no MCP server.
 - **Evidence or it does not count.** A ballot needs at least one sourced `FACT` or `INFERENCE`. Peers rate each other's evidence 0-2, and those ratings scale the vote weight.
 - **Anonymous cross-examination.** In round 2 members see every position as M1..Mn, shuffled, in a fresh session, so no member can recognise its own earlier answer or defer to a famous brand.
-- **Safe by construction.** Seats are read-only (kernel sandboxes or tool allowlists), outward-publishing tools are removed, credentials are stripped from their environment, and the workspace is fingerprinted before and after the run.
+- **Safe by construction.** Seats are read-only (kernel sandboxes or tool allowlists), outward-publishing tools are removed, credentials are stripped from their environment, and the workspace is fingerprinted after every round.
+- **Hard to steer.** Files and other members' answers are treated as data: cross-exam positions sit inside per-prompt nonce fences, seats report injection attempts, and a `file:line` citation that does not exist in the repo stops counting as a fact.
+- **Measured.** Every run reports its CLI calls, wall time and the tokens each CLI used, in `decision.md`, `result.json` and `status --json`.
 - **Never stalls.** Each seat falls back exactly one model level, then is marked UNATTENDED. A tie goes to the Fable seat, and an undecided council falls back to the safe `--default` you chose.
 - **Runs anywhere with a shell.** Claude Code, Codex CLI, Grok CLI, Antigravity, OpenCode, pi. Python 3.9+ standard library only (the version macOS ships).
 
@@ -85,6 +87,10 @@ detached, polls it, and acts on the verdict. Trigger it explicitly with `/llm-ro
 <summary>Other ways to run it</summary>
 
 ```bash
+# Claude Code only: install as a plugin instead (pick this or npx skills, not both)
+/plugin marketplace add dinhkarate/llm-roundtable
+/plugin install llm-roundtable@llm-roundtable
+
 # Without npm: clone and call the script directly (no dependencies)
 git clone https://github.com/dinhkarate/llm-roundtable
 python3 llm-roundtable/skills/llm-roundtable/scripts/roundtable.py doctor
@@ -111,7 +117,13 @@ llm-roundtable run --brief q.md --default C --min-margin 2/3
 
 # Cap the whole run at 30 minutes; the ballots so far are tallied
 llm-roundtable run --brief q.md --default C --deadline 1800
+
+# Skip the cross-exam when round 1 is unanimous (3+ valid ballots from 2+ vendors; never in review mode)
+llm-roundtable run --brief q.md --default C --early-stop
 ```
+
+Sample briefs to copy (a technology choice, a migration, a dependency upgrade, ship-or-defer and a PR review):
+[`skills/llm-roundtable/references/briefs/`](skills/llm-roundtable/references/briefs/).
 </details>
 
 ## How it works
@@ -204,9 +216,10 @@ with a few lines of JSON in `~/.config/roundtable/seats.json`. No code changes: 
 ## Safety and privacy
 
 - The brief goes to several vendors. The script refuses briefs that look like they contain secrets, and `--private` drops seats whose provider may train on prompts (OpenCode free models).
-- Members are read-only: `claude` with a tool allowlist and no MCP servers, `codex` and `grok` in kernel read-only sandboxes, `agy` sandboxed on a snapshot copy of the workspace.
+- Members are read-only: `claude` with a tool allowlist, no MCP servers and none of your hooks or memory (`--restricted`), `codex` and `grok` in kernel read-only sandboxes, `agy` sandboxed on a snapshot copy of the workspace.
 - Publishing tools (Codex apps, computer use, browser use, MCP servers) are disabled. Unrelated credentials (`GH_TOKEN`, cloud keys...) are stripped from each seat's environment.
-- With `--workspace`, the repo is fingerprinted before and after. Any change marks the run TAINTED and `VERDICT: NONE`.
+- With `--workspace`, the repo is fingerprinted after every round. Any change stops the council, marks the run TAINTED and gives `VERDICT: NONE`.
+- Text in files, quoted documents and other members' answers is data, never instructions. Steering attempts are reported (`INJECTION:`), never obeyed, and block `--early-stop`.
 - A seat cannot convene a nested council (`ROUNDTABLE_SEAT` guard).
 - The council picks between options the agent was already allowed to take. It never grants permission to push, deploy, delete data or spend money.
 
@@ -222,7 +235,7 @@ No. It calls the official CLIs you are already logged into (Claude Code, Codex, 
 OpenCode), so usage counts against your existing subscriptions. OpenCode free models need no login at all.
 
 **How long does a council take and what does it cost?**
-About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. `--rounds 1` halves it, `--seats duo` uses only two Claude models. `run --dry-run` prints the upper bounds for your setup, `--deadline` caps the whole run, and every `decision.md` ends with the calls and wall time it actually took.
+About 12 model calls (6 seats × 2 rounds), typically 5-20 minutes. `--rounds 1` halves it, `--seats duo` uses only two Claude models, `--early-stop` skips round 2 when round 1 is unanimous. `run --dry-run` prints the upper bounds for your setup, `--deadline` caps the whole run, and every `decision.md` ends with the calls, wall time and tokens per seat it actually took.
 
 **Can I use it with only Claude Code (or only Codex)?**
 Yes. Use the `duo`, `solo-codex`, `solo-grok` or `solo-agy` preset. Adding `opencode` (free, no login) is the
@@ -253,6 +266,9 @@ skills/llm-roundtable/
   scripts/seats.json       seats, adapters, presets
   references/protocol.md   rounds, prompts, maths
   references/hosts.md      per-host setup, presets, config overrides
+  references/briefs/       sample briefs (decide and review)
+  .claude-plugin/          Claude Code plugin manifest (optional install path)
+.claude-plugin/            marketplace entry for /plugin install
 bin/llm-roundtable.js      npm wrapper around the script
 docs/research.md           prior art, papers, design notes, field notes
 tests/                     unit tests with a fake CLI (no model calls)

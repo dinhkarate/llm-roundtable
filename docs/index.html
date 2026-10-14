@@ -84,7 +84,11 @@
   <h2>Install</h2>
 <pre><code>npx skills add dinhkarate/llm-roundtable --skill llm-roundtable   # Agent Skill for every agent on this machine
 npx llm-roundtable doctor --probe                                  # which seats can sit
-npx llm-roundtable run --brief brief.md --default C                # last line: VERDICT: B (council)</code></pre>
+npx llm-roundtable run --brief brief.md --default C                # last line: VERDICT: B (council)
+
+# Claude Code only, optional: the same skill as a plugin (pick one install path, not both)
+/plugin marketplace add dinhkarate/llm-roundtable
+/plugin install llm-roundtable@llm-roundtable</code></pre>
 
   <h2>Why a council, and why a vote</h2>
   <ul class="points">

@@ -102,6 +102,22 @@ CLI quirks found while building it (read these before touching an adapter):
   never finished a council (2026-10-14 host test) → `run --detach` double-forks into its own session.
 - `status` used to end at `DONE` without the verdict, so host agents re-ran `tally` to read it → `status` now
   prints the `VERDICT:` line.
+- A claude seat inherited the user's Claude Code setup: a SessionStart hook added context listing vault secret
+  *names*, a UserPromptSubmit hook ran, and auto-memory was attached (seen with `--include-hook-events`,
+  2026-10-14). That context could be quoted in a ballot and forwarded to four other vendors → claude seats run
+  with `--restricted`, which ignores user/project/local settings: no hooks, no memory paths, about 1.4k fewer
+  input tokens per call. The allowlisted `ls` still works under `--restricted`.
+- "You've hit your session limit" from claude is account-wide: walking to `claude-fable-5` on the same account
+  wasted 10 calls in the v0.2 councils → account-level patterns skip the fallback.
+- agy answered `PERMISSION_DENIED (code 403): This service has been disabled in this account for violation of
+  Terms of Service` on the author's machine (2026-10-14, `agy models`), after the gemini seat had been UNATTENDED
+  (quota) in every v0.2 council → treated as account-level; agy's JSON output format could not be inspected, so
+  the agy adapter stays plain text and reports no tokens.
+- Token figures come from each CLI's JSON output (`claude --output-format json`, `codex exec --json`,
+  `grok --output-format json`, `opencode run --format json` + `opencode session export <id>`; opencode's run
+  output itself carries none). The input side dominates: on a one-round smoke council about a formatter's line
+  length (2026-10-14) the four seats used 259k tokens, 64% of them cache reads, and grok alone 120k (it reads and
+  searches before voting).
 - Codex ships 100+ `codex_apps` tools (deploy sites, share pages, Datadog) plus computer use, and claude
   may load MCP servers that publish externally → all of these are disabled for council seats.
 
