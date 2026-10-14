@@ -106,15 +106,15 @@ llm-roundtable status
 ## How it works
 
 ```mermaid
-flowchart LR
-    A[Agent hits a decision<br/>while you are away] --> B[Writes brief.md<br/>question + context + options]
-    B --> C{{Round 1: blind}}
-    C --> F1[Fable] & F2[Opus] & F3[GPT / Codex] & F4[Grok] & F5[Gemini / agy] & F6[OpenCode free]
-    F1 & F2 & F3 & F4 & F5 & F6 --> D{{Round 2: anonymous cross-exam<br/>positions as M1..M6, shuffled}}
-    D --> E[Peers rate evidence 0-2<br/>rebut, re-vote]
-    E --> G["Weighted tally<br/>seat weight × (0.5 + 0.5 × peer rating)"]
-    G --> H[decision.md + VERDICT line]
-    H --> I[Agent acts and leaves a trail<br/>in the PR, issue or commit]
+flowchart TD
+    A["Agent hits a decision while you are away"] --> B["Writes brief.md: question, context, 2-5 options"]
+    B --> R1(["Round 1: blind, independent answers"])
+    R1 --> S1["Fable"] & S2["Opus"] & S3["GPT via Codex"] & S4["Grok"] & S5["Gemini via Antigravity"] & S6["OpenCode free model"]
+    S1 & S2 & S3 & S4 & S5 & S6 --> R2(["Round 2: anonymous cross-exam, positions shown as M1..M6, shuffled"])
+    R2 --> E["Peers rate evidence 0-2, rebut, re-vote"]
+    E --> G["Weighted tally: seat weight x (0.5 + 0.5 x peer rating)"]
+    G --> H["decision.md + VERDICT line"]
+    H --> I["Agent acts and leaves a trail in the PR, issue or commit"]
 ```
 
 1. **Brief.** The host agent writes a self-contained markdown brief with 2-5 concrete options. A secret scanner blocks obvious credentials before anything leaves the machine.
