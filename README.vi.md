@@ -17,7 +17,7 @@
 ---
 
 Agent chạy qua đêm (`/loop`, Orca worker, bot CI) hay bị kẹt ở câu *"chọn A hay B?"*, *"plan này ổn chưa?"*,
-*"merge diff này được không?"*. Thay vì dừng lại chờ bạn, agent triệu tập hội đồng gồm model của **năm hãng**,
+*"merge diff này được không?"*. Thay vì dừng lại chờ bạn, agent triệu tập hội đồng gồm model của **bốn hãng** (năm nếu bật ghế OpenCode),
 làm theo phán quyết và để lại vết (PR, issue, commit) cho bạn đọc sau.
 
 - **Dùng subscription sẵn có**: gọi CLI `claude`, `codex`, `grok`, `agy`, `opencode`. Không cần API key, không cần MCP.

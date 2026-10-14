@@ -45,12 +45,13 @@ khác chấm, Fable phá hoà, chạy được trên mọi host.
 - **Một script Python thuần (stdlib, 3.9+) + SKILL.md chuẩn Agent Skills.** Host nào có shell
   (Claude Code, Codex, Grok CLI, Antigravity, OpenCode, pi) đều chạy được; không cần MCP, không cần Orca.
   Cài qua `npx skills` như các skill khác.
-- **Mỗi ghế = một process CLI headless, read-only, phiên mới**, chạy trong thư mục rỗng (mặc định) hoặc
+- **Mỗi ghế = một process CLI headless, phiên mới** (read-only với các ghế mặc định; ghế OpenCode bật thêm thì không có sandbox), chạy trong thư mục rỗng (mặc định) hoặc
   đọc repo khi có `--workspace`. Adapter khai báo bằng JSON nên thêm CLI mới (qwen, cursor-agent, pi...)
   không phải sửa code.
 - **Ghế mặc định**: fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`, grok `grok-4.7`,
-  gemini `gemini-3.8-flash-high` (qua agy), opencode = model free mới nhất khác họ với các ghế còn lại.
-  6 ghế, số chẵn, nên luật "hoà thì Fable" có tác dụng thật.
+  gemini `gemini-3.8-flash-high` (qua agy): 5 ghế từ 4 hãng. Ghế OpenCode (model free mới nhất khác họ) là mặc
+  định tới v0.2.0, sau buổi review phát hành thì thành tuỳ chọn (`full-open`, preset solo) vì nó không có sandbox.
+  Khi có 6 ghế, hoặc một ghế vắng, số ghế chẵn nên luật "hoà thì Fable" có tác dụng thật.
 - **Fallback một cấp**, rồi UNATTENDED (đúng yêu cầu). Fallback trùng primary của ghế khác bị bỏ.
 - **Phiếu**: cần ít nhất một bằng chứng FACT/INFERENCE, nếu không thì phiếu không được tính.
   Trọng số = weight ghế × (0.5 + 0.5 × điểm bằng chứng trung bình do các ghế khác chấm, 0-2).

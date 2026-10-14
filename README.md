@@ -182,7 +182,7 @@ part is **models deferring to each other**:
 |---|---|
 | *Debate or Vote* (Choi, Zhu, Li, NeurIPS 2025): most of the gain from multi-agent debate comes from majority voting; free-form debate alone does not raise expected accuracy. | Round 1 is blind and independent. Only one evidence-bound cross-exam round by default. The verdict is a vote, not a discussion summary. |
 | *When Identity Skews Debate* (ACL 2026): models show sycophancy and self-bias when they know who said what; anonymising answers reduces both. | Positions are labelled M1..Mn, shuffled, and every round is a fresh session. Self-ratings are discarded. |
-| Homogeneous teams (CAIS 2026): agents from the same model family accept the majority answer up to 85.5% of the time and collapse into consensus. | One seat per model family by default, across five vendors. Single-vendor presets warn you and suggest adding a free OpenCode model. |
+| Homogeneous teams (CAIS 2026): agents from the same model family accept the majority answer up to 85.5% of the time and collapse into consensus. | One seat per model family by default, across four vendors (five with the opt-in OpenCode seat). Single-vendor presets warn you and suggest adding a free OpenCode model. |
 | Karpathy's [llm-council](https://github.com/karpathy/llm-council): the models tended to praise GPT and criticise Claude, sometimes against his own judgement. | No chairman model. The verdict is arithmetic on ballots; the host only reports it. |
 
 Details and sources: [`docs/research.md`](docs/research.md).

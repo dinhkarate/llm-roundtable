@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use llm-roundtable in research or a write-up, please cite it."
 title: "llm-roundtable: a multi-LLM council for autonomous coding agents"
-abstract: "An Agent Skill and stdlib-only Python script that convenes models from five vendors to gather evidence, cross-examine each other anonymously and cast evidence-weighted votes on decisions an unattended coding agent would otherwise ask its user."
+abstract: "An Agent Skill and stdlib-only Python script that convenes models from four vendors by default (five with an opt-in free OpenCode model) to gather evidence, cross-examine each other anonymously and cast evidence-weighted votes on decisions an unattended coding agent would otherwise ask its user."
 authors:
   - alias: dinhkarate
 type: software

@@ -5,7 +5,7 @@
 ## 1. Prior art
 
 "Several models answer, grade each other, then synthesise or vote" is a crowded idea. No existing project
-combined everything this one needed: CLI subscriptions instead of API keys, five vendors, a strict
+combined everything this one needed: CLI subscriptions instead of API keys, four or five vendors, a strict
 one-level fallback followed by UNATTENDED, votes weighted by peer-rated evidence, a fixed tie-breaker,
 and a skill that runs from any agent host.
 
@@ -44,12 +44,15 @@ as tie-breaker, any host.
 - **One pure Python script (stdlib, 3.9+) plus an Agent Skills `SKILL.md`.** Any host with a shell
   (Claude Code, Codex, Grok CLI, Antigravity, OpenCode, pi) can run it; no MCP, no Orca required.
   Installed with `npx skills` like any other skill, or run through the `llm-roundtable` npm wrapper.
-- **Each seat is a headless, read-only CLI process with a fresh session**, in an empty temp directory
+- **Each seat is a headless CLI process with a fresh session** (read-only for the default seats; the opt-in
+  OpenCode seat is not sandboxed), in an empty temp directory
   (default) or reading the repo with `--workspace`. Adapters are JSON, so a new CLI (qwen, cursor-agent,
   pi...) needs no code change.
 - **Default seats:** fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`, grok `grok-4.7`,
-  gemini `gemini-3.8-flash-high` (via agy), opencode = the newest free model from a family not already
-  seated. Six seats, an even number, so "ties go to Fable" actually matters.
+  gemini `gemini-3.8-flash-high` (via agy): five seats from four vendors. The free OpenCode seat (the newest free
+  model from a family not already seated) was a default until v0.2.0; it is opt-in (`full-open`, solo presets)
+  since the release review found it is not sandboxed. With six seats, or whenever one seat drops out, the count
+  is even, so "ties go to Fable" matters.
 - **One-level fallback**, then UNATTENDED. A fallback that equals another seat's primary is skipped.
 - **Votes:** at least one FACT or INFERENCE item with a source, otherwise the ballot does not count.
   Weight = seat weight × (0.5 + 0.5 × mean evidence rating from the other seats, 0-2). Highest weighted
