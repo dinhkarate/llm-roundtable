@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.2.1 (2026-10-15)
+
+- The opt-in OpenCode seat prefers free **Muse Spark** (Meta) when OpenCode offers it, before the newest free
+  model (`cat-jam-free` gave weak ballots). Seats take a `prefer` list of regexes (id, family or name), tried in
+  order before release date; `[]` restores plain newest-first.
+- `scripts/opencode-models.json`: bundled models.dev metadata for free OpenCode models, used when models.dev is
+  unreachable and nothing is cached (before, models were then ordered without release dates).
+- Weekly `models` workflow: `tools/update_models.py` refreshes that snapshot and `docs/model-watch.md` (the model
+  each seat runs and newer same-family models on models.dev), commits them after the tests pass, and opens an
+  issue when a fixed seat has a newer model. `seats.json` is still bumped by hand after a real CLI call.
+
 ## 0.2.0 (2026-10-15)
 
 Fixes from the release review (council, `--mode review`, CHANGES 5/5):

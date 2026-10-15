@@ -71,7 +71,7 @@ khác chấm, Fable phá hoà, chạy được trên mọi host.
 | codex | gpt-6.1-sol ok | gpt-6-sol ok |
 | grok | grok-4.7 ok | grok-4.6 ok |
 | gemini (agy 1.3.4) | gemini-3.8-flash-high ok | gemini-3.7-flash-high **không có trong agy** → khi 3.8 hết quota, ghế này UNATTENDED |
-| opencode | opencode/cat-jam-free ok (2026-10-12) | opencode/exo-free **đã deprecated** → đã tự ghi vào dead-models |
+| opencode | opencode/muse-spark-1.3-contributor-free ok (2026-10-15, được ưu tiên: cat-jam-free cho phiếu yếu) | opencode/cat-jam-free ok (2026-10-12); exo-free **đã deprecated** → đã tự ghi vào dead-models |
 
 Ghi chú CLI rút ra khi thử:
 - `opencode run` treo nếu stdin không đóng → script luôn đưa `/dev/null`.

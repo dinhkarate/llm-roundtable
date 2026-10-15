@@ -45,6 +45,7 @@ USER_CONFIG = Path(os.environ.get("ROUNDTABLE_CONFIG", str(Path.home() / ".confi
 RUNS_DIR = Path(os.environ.get("ROUNDTABLE_RUNS", str(Path.home() / ".roundtable/runs"))).expanduser().resolve()
 MODELS_DEV = "https://models.dev/api.json"
 DEAD_FILE = RUNS_DIR.parent / "dead-models.json"
+OPENCODE_SNAPSHOT = HERE / "opencode-models.json"  # models.dev opencode metadata, refreshed weekly by CI
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 QUOTA_RE = re.compile(
@@ -87,7 +88,7 @@ REVIEW_OPTIONS = [
 FALLBACK_STATUSES = {"quota", "unavailable", "error", "timeout"}
 EVIDENCE_TYPES = {"FACT", "INFERENCE"}  # the only types that make a ballot count; UNKNOWN never does
 OPEN_QUESTION = "UNKNOWN"  # an evidence item that is an open question: shown apart, never rated or counted
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 SCHEMA_VERSION = 2  # result.json and `status --json`; v0.1 results have no schema_version (= 1)
 NUDGES = 1  # retries per model call that ended without a usable ballot (dry-run bounds use the same constant)
 ARGV_PROMPT_LIMIT = 30000  # bytes; prompts passed on argv hit the 32 KB Windows command-line limit
@@ -160,8 +161,17 @@ def remember_dead(model):
         DEAD_FILE.write_text(encoding="utf-8", data=json.dumps(sorted(dead)))
 
 
+def opencode_snapshot():
+    """Free opencode models from the bundled snapshot (CI refreshes it from models.dev)."""
+    try:
+        return json.loads(OPENCODE_SNAPSHOT.read_text(encoding="utf-8")).get("models", {})
+    except (OSError, ValueError):
+        return {}
+
+
 def models_dev_opencode():
-    """Release dates of opencode models from models.dev, cached for a day (stale cache beats nothing)."""
+    """Release dates of opencode models from models.dev, cached for a day (stale cache beats the bundled snapshot,
+    which beats nothing)."""
     cache = RUNS_DIR.parent / "models-dev-opencode.json"
     if cache.exists() and time.time() - cache.stat().st_mtime < 86400:
         return json.loads(cache.read_text(encoding="utf-8"))
@@ -173,12 +183,34 @@ def models_dev_opencode():
         cache.write_text(encoding="utf-8", data=json.dumps(meta))
         return meta
     except Exception as e:
-        print("warning: models.dev unavailable (%s); opencode models ordered without release dates" % e, file=sys.stderr)
-        return json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
+        print("warning: models.dev unavailable (%s); using %s release dates" % (e, "cached" if cache.exists() else "bundled"),
+              file=sys.stderr)
+        return json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else opencode_snapshot()
 
 
-def opencode_free_models(exclude):
-    """Free opencode models this host can call, newest first (release dates from models.dev)."""
+def rank_free_models(listed, meta, exclude="", prefer=(), dead=()):
+    """Free, non-deprecated models from `listed` ("opencode/<id>"), best first: the first `prefer` pattern that
+    matches (id, family or name) wins, then the newest release within it; unmatched models follow, newest first."""
+    ex = re.compile(exclude, re.I) if exclude else None
+    pats = [re.compile(p, re.I) for p in prefer]
+    rows = []
+    for full in listed:
+        mid = full.split("/", 1)[1]
+        m = meta.get(mid, {})
+        free = "free" in mid or (m.get("cost") or {}).get("input") == 0
+        if not free or m.get("status") == "deprecated" or full in dead:
+            continue
+        if ex and (ex.search(mid) or ex.search(str(m.get("family") or ""))):
+            continue
+        keys = (mid, str(m.get("family") or ""), str(m.get("name") or ""))
+        rank = next((i for i, p in enumerate(pats) if any(p.search(k) for k in keys)), len(pats))
+        rows.append((-rank, m.get("release_date") or "0000", full))
+    rows.sort(reverse=True)
+    return [full for _, _, full in rows]
+
+
+def opencode_free_models(exclude, prefer=()):
+    """Free opencode models this host can call, best first (preferred families, then release dates from models.dev)."""
     if not shutil.which("opencode"):
         return []
     listed = []
@@ -195,21 +227,8 @@ def opencode_free_models(exclude):
         listed = [l.strip() for l in out.splitlines() if l.strip().startswith("opencode/")]
         if listed:
             break
-    meta = models_dev_opencode()
     dead = set(json.loads(DEAD_FILE.read_text(encoding="utf-8"))) if DEAD_FILE.exists() else set()
-    ex = re.compile(exclude, re.I) if exclude else None
-    rows = []
-    for full in listed:
-        mid = full.split("/", 1)[1]
-        m = meta.get(mid, {})
-        free = "free" in mid or (m.get("cost") or {}).get("input") == 0
-        if not free or m.get("status") == "deprecated" or full in dead:
-            continue
-        if ex and (ex.search(mid) or ex.search(str(m.get("family") or ""))):
-            continue
-        rows.append((m.get("release_date") or "0000", full))
-    rows.sort(reverse=True)
-    return [full for _, full in rows]
+    return rank_free_models(listed, models_dev_opencode(), exclude, prefer, dead)
 
 
 def seat_order(cfg, names):
@@ -242,7 +261,8 @@ def resolve_seats(cfg, names, private=False):
         models = s["models"]
         if isinstance(models, str) and models.startswith("auto:opencode-free"):
             count = int(s.get("count", 1))
-            cands = opencode_free_models(s.get("exclude", ""))
+            prefer = s.get("prefer") or []
+            cands = opencode_free_models(s.get("exclude", ""), [prefer] if isinstance(prefer, str) else prefer)
             for i in range(count):
                 seat = dict(s)
                 seat["id"] = sid if count == 1 else "%s-%d" % (sid, i + 1)

@@ -59,7 +59,7 @@
     {"id": "grok",     "adapter": "grok",     "family": "grok",   "models": ["grok-4.7", "grok-4.6"],                "weight": 1.0},
     {"id": "gemini",   "adapter": "agy",      "family": "gemini-flash", "models": ["gemini-3.8-flash-high", "gemini-3.7-flash-high"], "weight": 1.0},
     {"id": "opencode", "adapter": "opencode", "family": "opencode-free", "models": "auto:opencode-free", "count": 1, "weight": 1.0,
-     "may_train": true, "exclude": "claude|anthropic|gpt|openai|grok|xai|x-preview|gemini|google"},
+     "may_train": true, "exclude": "claude|anthropic|gpt|openai|grok|xai|x-preview|gemini|google", "prefer": ["muse-spark"]},
 
     {"id": "codex-6",  "adapter": "codex",    "family": "gpt-sol-alt", "models": ["gpt-6-sol"],              "weight": 1.0, "homogeneous": true},
     {"id": "grok-46",  "adapter": "grok",     "family": "grok-alt",    "models": ["grok-4.6", "grok-4.5"],   "weight": 1.0, "homogeneous": true}

@@ -64,6 +64,7 @@ chạy nền, theo dõi và làm theo phán quyết. Gọi tay bằng `/llm-roun
 
 ## Luật
 
+- Ghế OpenCode ưu tiên Muse Spark (Meta) bản free nếu OpenCode có, không thì lấy model free mới nhất khác họ; danh sách model được CI làm mới hằng tuần ([model watch](docs/model-watch.md)).
 - Fallback xuống đúng một cấp cùng họ (fable 5, opus 5, gpt-6-sol, grok-4.6, gemini 3.7 flash, model free kế tiếp); hết cách thì ghế đó **UNATTENDED**.
 - Trọng số = weight × (0.5 + 0.5 × điểm bằng chứng trung bình do các ghế khác chấm, 0-2). Điểm tự chấm bị bỏ.
 - Hoà → theo phiếu của Fable; Fable không nằm trong nhóm hoà → TIE. Dưới 2 phiếu hợp lệ → NO QUORUM. TIE/NO QUORUM → lấy `--default`.

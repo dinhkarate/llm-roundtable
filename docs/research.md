@@ -72,7 +72,7 @@ as tie-breaker, any host.
 | codex | gpt-6.1-sol ok | gpt-6-sol ok |
 | grok | grok-4.7 ok | grok-4.6 ok |
 | gemini (agy 1.3.4) | gemini-3.8-flash-high ok | gemini-3.7-flash-high **not offered by agy** → when 3.8 is out of quota the seat is UNATTENDED |
-| opencode | opencode/cat-jam-free ok (2026-10-12) | opencode/exo-free **deprecated** → recorded in dead-models automatically |
+| opencode | opencode/muse-spark-1.3-contributor-free ok (2026-10-15, preferred: cat-jam-free gave weak ballots) | opencode/cat-jam-free ok (2026-10-12); exo-free **deprecated** → recorded in dead-models automatically |
 
 CLI quirks found while building it (read these before touching an adapter):
 

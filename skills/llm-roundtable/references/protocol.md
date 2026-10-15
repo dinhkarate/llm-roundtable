@@ -115,8 +115,11 @@ CLI missing on PATH -> UNATTENDED immediately
 - A fallback that equals another seat's primary is dropped (two seats must not be the same voice).
 - OpenCode `auto:opencode-free`: `opencode models` filtered to `opencode/*free` (or zero cost on
   models.dev), excluding families that already sit (claude, gpt, grok, gemini...) and models marked
-  deprecated by models.dev or seen failing as deprecated (`~/.roundtable/dead-models.json`), newest
-  release date first. `count: N` seats N distinct models; seat i falls back to candidate i+N.
+  deprecated by models.dev or seen failing as deprecated (`~/.roundtable/dead-models.json`). Models matching
+  the seat's `prefer` patterns (regex on id, family or name, in order; default `["muse-spark"]`) come first, then
+  the newest release date. `count: N` seats N distinct models; seat i falls back to candidate i+N. Release dates
+  come from models.dev (cached a day), else the bundled `scripts/opencode-models.json`, which a weekly CI job
+  refreshes (`tools/update_models.py`, report in `docs/model-watch.md`).
 
 ## Tally
 

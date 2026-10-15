@@ -83,13 +83,14 @@ such as a Windows box) instead of a subprocess.
 
 Put a JSON file at `~/.config/roundtable/seats.json` (or pass `--config`). Same shape as
 `scripts/seats.json`; `adapters` and `presets` merge by key, `seats` patch by `id`, new ids are added.
-An adapter gets no secret-looking environment variables except the prefixes in its `auth_env`: list the ones its
+`prefer` on the opencode seat is an ordered list of regexes (id, family or name) tried before release date;
+`[]` goes back to plain newest-first. An adapter gets no secret-looking environment variables except the prefixes in its `auth_env`: list the ones its
 CLI logs in with, or a key-based CLI will start without its key.
 
 ```json
 {
   "seats": [
-    {"id": "opencode", "count": 2},
+    {"id": "opencode", "count": 2, "prefer": ["muse-spark", "nemotron"]},
     {"id": "fable", "weight": 1.2},
     {"id": "qwen", "adapter": "qwen", "family": "qwen", "models": ["qwen3-coder-plus"], "weight": 1.0}
   ],

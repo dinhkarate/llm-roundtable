@@ -210,7 +210,7 @@ Details and sources: [`docs/research.md`](docs/research.md).
 | **codex** `gpt-6.1-sol` → `gpt-6-sol` | `codex` | `codex login` (ChatGPT plan) |
 | **grok** `grok-4.7` → `grok-4.6` | `grok` | `grok login` |
 | **gemini** `gemini-3.8-flash-high` → `gemini-3.7-flash-high` | `agy` (Antigravity) | run `agy` once |
-| **opencode** (opt-in: `--seats full-open` or a solo preset) newest free model from a family not already seated | `opencode` | none |
+| **opencode** (opt-in: `--seats full-open` or a solo preset) free Muse Spark (Meta) when OpenCode offers it, else the newest free model from a family not already seated; [model watch](docs/model-watch.md) | `opencode` | none |
 
 Missing CLIs are not errors; those seats are UNATTENDED and the rest still vote. Presets for one-tool setups:
 `duo` (Claude only), `solo-codex`, `solo-grok`, `solo-agy`. Add any other CLI (Qwen, Cursor agent, Aider...)

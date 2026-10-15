@@ -1,7 +1,7 @@
 ---
 name: llm-roundtable
 description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity; optionally the newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
-version: 0.2.0
+version: 0.2.1
 tags: [decision, review, multi-model, debate, voting, council]
 ---
 
@@ -145,8 +145,9 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
 ## Rules the script enforces
 
 - Seats (default): fable `claude-fable-5-1`, opus `claude-opus-5-5`, codex `gpt-6.1-sol`,
-  grok `grok-4.7`, gemini `gemini-3.8-flash-high` (Antigravity); opt-in opencode = newest free OpenCode
-  model whose family differs from the others.
+  grok `grok-4.7`, gemini `gemini-3.8-flash-high` (Antigravity); opt-in opencode = free Muse Spark (Meta)
+  when OpenCode offers it (`prefer` in seats.json), else the newest free OpenCode model whose family differs
+  from the others.
 - Fallback: one level down in the same family only (fable 5, opus 5, gpt-6-sol, grok-4.6,
   gemini 3.7 flash, next-newest free OpenCode model) on quota / unavailable / error / timeout.
   Still failing, or CLI missing: the seat is **UNATTENDED**. An account-level limit (Claude session or
