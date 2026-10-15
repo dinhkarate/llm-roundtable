@@ -25,6 +25,7 @@ làm theo phán quyết và để lại vết (PR, issue, commit) cho bạn đ�
 - **Chất vấn ẩn danh**: vòng 2 thấy lập trường dưới tên M1..Mn, xáo thứ tự, phiên mới, nên không model nào nhận ra câu của mình.
 - **An toàn**: các ghế mặc định chỉ đọc (sandbox kernel, allowlist hoặc bản sao workspace), tắt tool đăng ra ngoài, mỗi ghế chỉ nhận credential của chính CLI mình, so workspace (cả file gitignored như `.env`, trừ node_modules/target/cache) sau mỗi vòng; ghế claude không nhận hook hay memory của bạn (`--restricted`, cần Claude Code ≥ 2.1.248). Ghế OpenCode **không có sandbox** (service nền của nó chạy được lệnh shell bất kỳ đâu) nên mặc định tắt; bật bằng `--seats full-open` hoặc preset `solo-*`, `--private` sẽ bỏ nó.
 - **Khó bị dắt mũi**: file và câu trả lời của ghế khác chỉ là dữ liệu: lập trường vòng 2 nằm trong rào có nonce riêng mỗi prompt, ghế báo lại chỗ có prompt injection, và trích `file:line` không có trong repo thì không còn được tính là FACT.
+- **Audit, không chỉ bỏ phiếu**: `--mode audit` cho mỗi ghế tự tìm lỗi trong phạm vi brief (có `file:line`), script gộp lỗi trùng, rồi mọi ghế kiểm chứng từng lỗi ẩn danh (CONFIRMED / REJECTED / UNSURE kèm bằng chứng; ghế không được chấm lỗi của chính mình). Lỗi được xác nhận khi ít nhất hai ghế ủng hộ và nặng ký hơn phía bác bỏ. Kết quả: `findings.json` và `VERDICT: FINDINGS|CLEAN|NONE`. Ghế hết quota bị bỏ như mọi lần chạy.
 - **Đo được**: mỗi lần chạy ghi số lần gọi CLI, thời gian và số token từng CLI dùng.
 - **Không bao giờ treo**: fallback đúng một cấp rồi UNATTENDED; hoà thì Fable quyết; không quyết được thì lấy `--default` an toàn.
 - **Chạy ở mọi nơi có shell**: Claude Code, Codex CLI, Grok CLI, Antigravity, OpenCode, pi. Python 3.9+ chỉ dùng stdlib.
@@ -44,6 +45,7 @@ npx llm-roundtable doctor --probe                                 # ghế nào n
 ```bash
 npx llm-roundtable run --brief brief.md --default C               # brief có mục "## Options" (- A: ..., - B: ...)
 npx llm-roundtable run --brief plan.md --mode review --workspace . # duyệt: APPROVE / CHANGES / REJECT
+npx llm-roundtable run --brief audit.md --mode audit --workspace . # audit: các ghế tự tìm lỗi rồi kiểm chứng chéo
 npx llm-roundtable run --brief q.md --seats duo                   # chỉ Fable vs Opus
 npx llm-roundtable run --brief brief.md --default C --dry-run     # kiểm tra trước: ghế, quorum, giới hạn số lần gọi/thời gian (JSON), không gọi model
 npx llm-roundtable status                                         # tiến độ lần chạy mới nhất

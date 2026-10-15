@@ -428,6 +428,10 @@ class BriefPackTest(unittest.TestCase):
         self.assertGreaterEqual(len(briefs), 3)
         for p in briefs:
             text = p.read_text(encoding="utf-8")
+            self.assertEqual(rt.secret_scan(text), [], p.name)
+            if "audit" in p.name:  # audit briefs set a scope: no Options section, the script adds FINDINGS / CLEAN
+                self.assertNotRegex(text, r"(?mi)^#+\s*Options\s*$")
+                continue
             review = p.name == "pr-review.md"
             args = types.SimpleNamespace(option=None, mode="review" if review else "decide")
             ids = [o for o, _ in rt.parse_options(args, text)]

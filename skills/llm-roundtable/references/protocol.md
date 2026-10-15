@@ -151,6 +151,41 @@ decision.md says "unanimous in round 1; evidence cited but not peer-rated"; `dec
 Every run, early stop or not, records a shadow measurement (`shadow.r1_unanimous`, `shadow.changed_after_r1`)
 so the cost of skipping round 2 can be measured instead of assumed.
 
+## Audit mode
+
+`--mode audit` (no options, no `--default`, at most 2 rounds; `--early-stop` and `--min-margin` do not apply):
+
+```
+round 1 (find)    every seat audits the brief's scope alone: {"summary", "coverage", "findings": [{"title",
+                  "severity", "category", "location", "detail", "recommendation", "evidence"}]}; at most 15
+                  findings per seat; a finding without FACT/INFERENCE evidence is listed as unsupported, never
+                  verified; file:line citations are source-checked as in any run
+merge             (script, no model call) findings from different seats are merged when they cite the same file
+                  within 3 lines with related titles (word overlap >= 0.2, or the same category), or their titles
+                  nearly match (>= 0.6); two findings of one seat are never merged. The first 40, by number of
+                  reporters then severity, go to round 2 with ids F1..Fn in a shuffled order
+round 2 (verify)  every seat gets every finding inside nonce fences, authors and reporter counts hidden, and
+                  answers per id CONFIRMED | REJECTED | UNSURE + its own severity + optional duplicate_of;
+                  CONFIRMED/REJECTED without FACT/INFERENCE evidence count as UNSURE
+support           reporters + seats that CONFIRMED (a seat's verdict on a finding it reported is ignored)
+against           seats that REJECTED
+confirmed         >= 2 supporting seats and weight(support) > weight(against)
+rejected          weight(against) > weight(support)
+disputed          someone rejected it, neither of the above
+unverified        otherwise (one reporter, nobody confirmed; also every finding past the first 40)
+duplicate         more than half of the seats that judged F (not its reporters) call it a duplicate of the
+                  same G: F's reporters count for G
+severity          lower median of the severities of the reporters and confirmers
+verdict           FINDINGS if any finding is confirmed, else CLEAN; valid reports < quorum -> NONE (none);
+                  tainted workspace -> NONE (workspace_changed)
+```
+
+With `--rounds 1` there is no verification: a finding is confirmed only when two seats reported it blind.
+Seats that hit quota fall back one model level, then are UNATTENDED, as in every run (no waiting for a reset).
+Output: `findings.json` (the merged findings with status, support, against and every check), `decision.md`
+(confirmed, disputed, unverified, rejected, duplicates, unsupported, coverage), `result.json`, and in
+`status --json` an `audit` object (counts, a one-line row per finding, the findings.json path).
+
 **Diversity** (reported, never a quorum rule): `tally.vendor_clis` lists the CLIs behind the ballots that
 counted; `tally.low_diversity` is true when there is only one (e.g. the duo preset), with a banner in decision.md.
 

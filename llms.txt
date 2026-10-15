@@ -14,6 +14,7 @@ Key facts:
 - Prompt-injection hardening: files and other members' text are data; cross-exam positions are fenced with a per-prompt nonce, seats report steering attempts (`injection_suspected`), and a FACT whose every `file:line` is missing from the workspace is downgraded to ASSUMPTION.
 - Account-level limits (Claude session limit, a disabled account) skip the same-account fallback.
 - Review mode (`--mode review --workspace .`) approves or rejects plans, diffs and pull requests: APPROVE / CHANGES / REJECT.
+- Audit mode (`--mode audit --workspace .`): each seat reports findings with file:line evidence, the script merges duplicates, then every seat verifies every finding anonymously (CONFIRMED / REJECTED / UNSURE; its own findings excluded). A finding is confirmed when two seats support it and outweigh the rejections. Output: findings.json and VERDICT: FINDINGS | CLEAN | NONE.
 - Output: `~/.roundtable/runs/<time>-<slug>/decision.md` and `result.json` (`schema_version` 2); the last line is `VERDICT: <option|NONE> (council|tiebreak|default|none|workspace_changed)`. `status --json` prints state, verdict and flags as JSON for host agents.
 - `run --dry-run` prints the resolved seats, quorum and call/time bounds as JSON without calling a model; `--deadline` caps the whole run.
 - Optional `--min-margin` (e.g. `2/3`): a winner below that share of the valid weight falls back to `--default`, keeping the council's pick as `council_verdict`.

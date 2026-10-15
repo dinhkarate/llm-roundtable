@@ -7,7 +7,7 @@ authors:
 type: software
 license: MIT
 repository-code: "https://github.com/dinhkarate/llm-roundtable"
-version: 0.2.1
+version: 0.3.0
 date-released: 2026-10-15
 keywords:
   - llm council

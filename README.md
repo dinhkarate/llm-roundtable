@@ -46,6 +46,7 @@ computed from the ballots, not written by a "chairman" model, and every run leav
 - **Anonymous cross-examination.** In round 2 members see every position as M1..Mn, shuffled, in a fresh session, so no member can recognise its own earlier answer or defer to a famous brand.
 - **Locked down by default.** The default seats are read-only (kernel sandboxes, a tool allowlist, or a snapshot copy), outward-publishing tools are removed, each seat gets only its own CLI's credentials, and the workspace is fingerprinted after every round. The opt-in OpenCode seat is not sandboxed; see [Safety](#safety-and-privacy).
 - **Hard to steer.** Files and other members' answers are treated as data: cross-exam positions sit inside per-prompt nonce fences, seats report injection attempts, and a `file:line` citation that does not exist in the repo stops counting as a fact.
+- **Audits, not only votes.** `--mode audit` turns the council into a review panel: every seat looks for problems on its own, the script merges duplicates, then every seat checks every finding anonymously. A finding counts when two seats back it with evidence; the result is `findings.json` plus `VERDICT: FINDINGS|CLEAN`.
 - **Measured.** Every run reports its CLI calls, wall time and the tokens each CLI used, in `decision.md`, `result.json` and `status --json`.
 - **Never stalls.** Each seat falls back exactly one model level, then is marked UNATTENDED. A tie goes to the Fable seat, and an undecided council falls back to the safe `--default` you chose.
 - **Runs anywhere with a shell.** Claude Code, Codex CLI, Grok CLI, Antigravity, OpenCode, pi. Python 3.9+ standard library only (the version macOS ships).
@@ -97,6 +98,9 @@ python3 llm-roundtable/skills/llm-roundtable/scripts/roundtable.py doctor
 
 # Review a plan, PR or diff: options become APPROVE / CHANGES / REJECT
 llm-roundtable run --brief plan.md --mode review --workspace .
+
+# Audit a scope: seats report findings, then verify each other's (VERDICT: FINDINGS | CLEAN | NONE)
+llm-roundtable run --brief audit.md --mode audit --workspace .
 
 # Only Claude installed? Fable vs Opus
 llm-roundtable run --brief q.md --seats duo
@@ -250,6 +254,14 @@ cheapest way to bring in a second vendor, which matters because same-family mode
 Yes: `--mode review --workspace .` gives members read-only access to the repo and the options become
 APPROVE / CHANGES / REJECT. The project reviews its own changes this way; see the self-review table in
 [`docs/research.md`](docs/research.md#4-field-notes).
+
+**Can it audit code, not just vote?**
+Yes: `--mode audit --workspace .` with a brief that sets the scope (no options). Round 1: every seat reports
+findings with `file:line` evidence on its own. The script merges findings about the same problem. Round 2: every
+seat checks every finding without knowing who reported it and answers CONFIRMED / REJECTED / UNSURE with evidence;
+a seat's check of its own finding is ignored. A finding is confirmed when at least two seats support it and they
+outweigh the rejections. Seats that run out of quota are dropped, as in any run. Sample:
+[`security-audit.md`](skills/llm-roundtable/references/briefs/security-audit.md).
 
 **Will it change my code?**
 Not with the default seats: they are read-only, and the workspace is checked after every round. The opt-in OpenCode seat is not sandboxed (see Safety). The host agent acts on the verdict, within the permissions you already gave it.

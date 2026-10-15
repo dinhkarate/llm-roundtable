@@ -69,7 +69,8 @@ class SnapshotTest(unittest.TestCase):
 
 class UpdateModelsToolTest(unittest.TestCase):
     def api(self):
-        return {
+        return {"openai": {"models": {"gpt-6.1-sol": {"family": "gpt-sol", "release_date": "2026-09-29"}}},
+                "xai": {"models": {"grok-4.7": {"family": "grok", "release_date": "2026-09-21"}}},
             "opencode": {"models": dict(META, **{"paid-x": {"release_date": "2026-10-01", "cost": {"input": 3}}})},
             "anthropic": {"models": {
                 "claude-fable-5-1": {"family": "claude-fable", "release_date": "2026-09-01"},
@@ -101,10 +102,24 @@ class UpdateModelsToolTest(unittest.TestCase):
         self.assertIn("| opencode | `opencode/muse-spark-1.3-contributor-free` |", report)
         self.assertNotIn("codex-6", report)  # homogeneous helper seats are not watched
 
-    def test_refuses_an_answer_without_opencode(self):
-        r = self.run_tool({"anthropic": {"models": {}}})
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn("refusing", r.stderr)
+    def test_refuses_partial_answers(self):
+        for api in ({"anthropic": {"models": {}}},  # no opencode
+                    dict(self.api(), xai={"models": {}}),  # a fixed-seat provider missing
+                    dict(self.api(), opencode={"models": {"paid": {"cost": {"input": 1}}}})):  # no free model left
+            r = self.run_tool(api)
+            self.assertNotEqual(r.returncode, 0)
+            self.assertIn("refusing", r.stderr)
+
+    def test_no_release_date_means_nothing_newer(self):
+        sys.path.insert(0, str(ROOT / "tools"))
+        import update_models as um
+        api = {"anthropic": {"models": {"a-1": {"family": "a"}, "a-2": {"family": "a", "release_date": "2026-10-01"}}}}
+        self.assertEqual(um.newer_in_family(api, "claude", "a-1")[1], [])
+
+    def test_free_needs_zero_input_and_output(self):
+        self.assertTrue(rt.is_free("x-free", {"cost": {"input": 1}}))
+        self.assertTrue(rt.is_free("x", {"cost": {"input": 0, "output": 0}}))
+        self.assertFalse(rt.is_free("x", {"cost": {"input": 0, "output": 2}}))
 
 
 if __name__ == "__main__":

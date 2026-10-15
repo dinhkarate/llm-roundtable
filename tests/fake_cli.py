@@ -21,6 +21,13 @@
   stall          no ballot; when nudged, crash (exit 1): worst case of one model call in _sit
   inject         ballot reports a prompt injection in "injection_suspected"
   ghost          its only FACT cites ghost.py:3, a file that is not in any workspace
+  aud-<L>-<P>    audit mode. Round 1 reports the findings named by letters L ("0" = none): x SQL injection at
+                 app.py:2, q the same problem worded differently at app.py:3, y missing timeout at app.py:5, w the
+                 timeout problem worded differently at other.py:1, z cites ghost.py:3, n has no FACT/INFERENCE.
+                 Round 2 answers every finding by policy P: conf (CONFIRMED), rej (REJECTED), bare (CONFIRMED without
+                 evidence), rejy (REJECTED when the title mentions a timeout, else CONFIRMED), dupw (marks the
+                 "deadline" finding a duplicate of the "timeout" one), none (an empty verdict list), write (writes a
+                 file into the cwd in round 1, then confirms).
 Usage: fake_cli.py <model> [--format=claude-json|codex-jsonl|grok-json|opencode-jsonl]   (prompt on stdin)
        fake_cli.py export <session>   (opencode-style `session export`: token totals as JSON)
 With --crash-in-round=N, the prompt of round N crashes (exit 1). With --crash-in-cross, any cross-exam prompt crashes (exit 1): the seat's round-1 ballot is carried.
@@ -104,6 +111,40 @@ if "--crash-in-cross" in sys.argv[2:] and cross:
     sys.exit(1)
 
 parts = model.split("-")
+if parts[0] == "aud":
+    CATALOGUE = {
+        "x": ("SQL injection in login query", "high", "security", "app.py:2", "FACT"),
+        "q": ("Login query builds SQL from user input", "critical", "security", "app.py:3", "FACT"),
+        "y": ("Missing request timeout", "medium", "reliability", "app.py:5", "FACT"),
+        "w": ("HTTP client never sets a deadline", "medium", "reliability", "other.py:1", "FACT"),
+        "z": ("Hardcoded key", "high", "security", "ghost.py:3", "FACT"),
+        "n": ("Vague concern", "low", "", "somewhere", "ASSUMPTION"),
+    }
+    policy = parts[2] if len(parts) > 2 else "conf"
+    if "=== FINDINGS TO VERIFY ===" not in prompt:
+        if policy == "write":
+            open("written-by-seat.txt", "w").write("x")
+        found = [] if parts[1] == "0" else [CATALOGUE[c] for c in parts[1]]
+        report = {"summary": "fake audit", "coverage": "read app.py", "findings": [
+            {"title": t, "severity": sev, "category": cat, "location": loc, "detail": "d", "recommendation": "r",
+             "evidence": [{"type": typ, "claim": "seen", "source": loc}]} for t, sev, cat, loc, typ in found]}
+        print("audit...\n```json\n%s\n```" % json.dumps(report))
+        sys.exit(0)
+    if "--crash-in-round=2" in sys.argv[2:]:
+        print("Error: connection reset", file=sys.stderr)
+        sys.exit(1)
+    listed = re.findall(r"^(F\d+) \[(\w+)\] (.+)$", prompt, re.M)
+    timeout_id = next((fid for fid, _, t in listed if "timeout" in t.lower()), None)
+    verdicts = []
+    for fid, sev, title in listed:
+        v = "REJECTED" if policy == "rej" or (policy == "rejy" and "timeout" in title.lower()) else "CONFIRMED"
+        row = {"id": fid, "verdict": v, "severity": "high", "note": "checked",
+               "evidence": [] if policy == "bare" else [{"type": "FACT", "claim": "checked", "source": "app.py:1"}]}
+        if policy == "dupw" and "deadline" in title.lower() and timeout_id:
+            row["duplicate_of"] = timeout_id
+        verdicts.append(row)
+    print("verify...\n```json\n%s\n```" % json.dumps({"summary": "s", "verdicts": [] if policy == "none" else verdicts}))
+    sys.exit(0)
 if parts[0] == "lazy" and "previous attempt ended without a usable JSON ballot" not in prompt:
     print("I'll review the files first, then vote.")
     sys.exit(0)

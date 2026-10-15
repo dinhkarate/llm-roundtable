@@ -1,6 +1,6 @@
 {
   "name": "llm-roundtable",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Multi-LLM council for AI coding agents: Claude Fable, Opus, GPT (Codex), Grok and Gemini (plus an opt-in free OpenCode model) debate anonymously and cast evidence-weighted votes. Agent Skill for Claude Code, Codex, Grok CLI, Antigravity, OpenCode.",
   "keywords": [
     "llm",

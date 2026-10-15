@@ -7,7 +7,7 @@
 - docs/model-watch.md: the model each seat runs, and newer models of the same family that models.dev lists.
   Fixed seats are never bumped automatically: a new model has to pass a real CLI call first (AGENTS.md).
 
-Both files are stable (no timestamps), so the workflow opens a PR only when something changed.
+Both files are stable (no timestamps), so the workflow commits only when something changed.
 Usage: python3 tools/update_models.py [--api models.json] [--check]
 """
 import argparse
@@ -43,7 +43,7 @@ def snapshot(api):
     keep = ("name", "family", "release_date", "status", "cost")
     models = {}
     for mid, m in sorted(api.get("opencode", {}).get("models", {}).items()):
-        if "free" in mid or (m.get("cost") or {}).get("input") == 0:
+        if roundtable.is_free(mid, m):
             models[mid] = {k: m[k] for k in keep if m.get(k) is not None}
     return {"source": roundtable.MODELS_DEV, "models": models}
 
@@ -52,8 +52,8 @@ def newer_in_family(api, adapter, model):
     """(models.dev entry for `model`, newer text models of the same provider and family, newest first)."""
     models = api.get(PROVIDER.get(adapter, ""), {}).get("models", {})
     cur = models.get(model) or models.get(CLI_SUFFIX.sub("", model))
-    if not cur or not cur.get("family"):
-        return cur, []
+    if not cur or not cur.get("family") or not cur.get("release_date"):
+        return cur, []  # without the current model's date nothing can be called newer
     out = []
     for mid, m in models.items():
         if m.get("family") != cur["family"] or NOT_A_SEAT.search(mid) or m.get("status") == "deprecated":
@@ -98,9 +98,12 @@ def main():
     ap.add_argument("--check", action="store_true", help="exit 1 if a file would change, write nothing")
     args = ap.parse_args()
     api = fetch(args.api)
-    if not api.get("opencode", {}).get("models"):
-        raise SystemExit("models.dev answer has no opencode models; refusing to overwrite the snapshot")
+    missing = [p for p in ["opencode"] + sorted(set(PROVIDER.values())) if not (api.get(p) or {}).get("models")]
+    if missing:
+        raise SystemExit("models.dev answer has no models for %s; refusing to overwrite anything" % ", ".join(missing))
     snap = snapshot(api)
+    if not any(m.get("status") != "deprecated" for m in snap["models"].values()):
+        raise SystemExit("models.dev lists no current free opencode model; refusing to overwrite the snapshot")
     cfg = json.loads((SCRIPTS / "seats.json").read_text(encoding="utf-8"))
     out = {SNAPSHOT: json.dumps(snap, indent=1, sort_keys=True) + "\n", WATCH: watch(api, cfg, snap)}
     changed = [p for p, text in out.items() if not p.exists() or p.read_text(encoding="utf-8") != text]

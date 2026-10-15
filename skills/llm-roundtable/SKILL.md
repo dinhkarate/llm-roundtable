@@ -1,7 +1,7 @@
 ---
 name: llm-roundtable
 description: Decide in the user's place when the user is not there. Convenes a council of AI models from different vendors (Fable, Opus, GPT via Codex, Grok, Gemini via Antigravity; optionally the newest free OpenCode model) that gather evidence, cross-examine each other anonymously and cast weighted, evidence-backed votes; the highest weighted option wins, ties go to the Fable seat, and an undecided council falls back to a safe default. Use automatically in unattended or autonomous runs (Orca workers, orca-pod bots, long /loop or /goal sessions, overnight work) whenever you would otherwise stop to ask the user to choose, approve or review something (design choice, plan, PR/diff, migration, risky change). Also use when the user says /llm-roundtable or /roundtable, "hội bàn tròn", "hội đồng", "council", "cho mấy con AI bàn/phản biện/duyệt". Works from Claude Code, Codex, Grok CLI, Antigravity, OpenCode or pi — any agent with a shell.
-version: 0.2.1
+version: 0.3.0
 tags: [decision, review, multi-model, debate, voting, council]
 ---
 
@@ -48,7 +48,11 @@ change"). It is what happens when the council cannot decide; nobody is there to 
   do not run a council.
 - Approval of a plan / diff / PR: use `--mode review` (options APPROVE / CHANGES / REJECT) and
   either paste the artifact into the brief or pass `--workspace <repo>` so members read it.
-- Worked examples (decide and review): `references/briefs/`.
+- Audit of a scope (security review, bug hunt, docs-vs-code check), when there is no choice to make but
+  problems to find: use `--mode audit --workspace <repo>`. The brief sets the scope and what to look for; no
+  Options section and no `--default`. Seats report findings, the script merges duplicates, every seat verifies
+  every finding (its own excluded).
+- Worked examples (decide, review, audit): `references/briefs/`.
 
 ## 2. Run
 
@@ -117,6 +121,11 @@ The last line of the output is `VERDICT: <option|NONE> (council|tiebreak|default
   default even though the council preferred `council_verdict`; say so in the trail.
 - **NONE** (no `--default` and no decision, or a TAINTED run): take the most reversible path, usually
   leaving the change undone, and move on to other work.
+- **Audit runs** end with `VERDICT: FINDINGS (council)`, `CLEAN (council)` or `NONE (none|workspace_changed)`
+  and a `FINDINGS:` line. Act on the **confirmed** findings in `findings.json` (fix them if fixing is part of
+  your task, else report them); list disputed and unverified ones in the trail without acting on them; ignore
+  rejected and duplicate ones. CLEAN means nothing was confirmed, not that the code is proven safe: report the
+  seats' coverage. An audit never authorizes more than the task already did.
 - **Kill criteria and unresolved questions** are for watching, not doing: report them in the trail and
   check them when you touch this area again. Do not carry them out as tasks and do not re-run the council
   on them. If one is already true, say so in the trail and treat it as a reason for the user to revisit.

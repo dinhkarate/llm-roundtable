@@ -1,6 +1,6 @@
 # Sample briefs
 
-Five briefs that show the shape a council needs. Copy one, replace the facts with yours, keep the structure.
+Six briefs that show the shape a council needs. Copy one, replace the facts with yours, keep the structure.
 The whole file becomes the members' prompt, so a brief holds only the question, the facts and the options:
 no hints about which option you prefer, no expected answer.
 
@@ -11,6 +11,7 @@ no hints about which option you prefer, no expected answer.
 | [dependency-upgrade.md](dependency-upgrade.md) | decide | upgrade now / pin / replace, with `--workspace` so members read the lockfile |
 | [ship-or-defer.md](ship-or-defer.md) | decide | ship, ship behind a flag, or defer; "defer" as a real option |
 | [pr-review.md](pr-review.md) | review | approval of a change: no `## Options` section, the script adds APPROVE / CHANGES / REJECT |
+| [security-audit.md](security-audit.md) | audit | a scope to search, no options: seats report findings, then verify each other's |
 
 ## Running one
 
@@ -26,6 +27,10 @@ one: it is what happens on a tie, a narrow margin or no quorum. Review mode defa
 
 For `pr-review.md`, either paste the diff into the brief or pass `--workspace <repo>` so members read the
 change themselves (read-only), and add `--mode review`.
+
+For `security-audit.md`, pass `--mode audit --workspace <repo>`. An audit takes no options and no `--default`:
+its verdict is `FINDINGS` (at least one finding confirmed), `CLEAN` (none confirmed) or `NONE` (no quorum), and
+the findings are in `findings.json`.
 
 ## What comes back (shape, not answers)
 

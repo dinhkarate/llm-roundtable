@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 (2026-10-15)
+
+- **`--mode audit`**: for a scope to search instead of a choice to make (security review, bug hunt, docs vs code).
+  Round 1: every seat reports up to 15 findings with evidence; findings without FACT/INFERENCE evidence, or whose
+  every `file:line` is missing, are listed as unsupported. The script merges findings about the same problem
+  (same file within 3 lines and related titles, or near-identical titles; never two of one seat). Round 2: every
+  seat checks every merged finding (at most 40, anonymous, shuffled, nonce-fenced) and answers CONFIRMED /
+  REJECTED / UNSURE with its own evidence and severity; its verdict on its own finding is ignored. Confirmed =
+  at least two supporting seats outweighing the rejections. Output: `findings.json`, an audit `decision.md`, a
+  `FINDINGS:` line, `status --json` `audit`, and `VERDICT: FINDINGS|CLEAN|NONE`. No options, no `--default`.
+- Seats that run out of quota are dropped (fallback, then UNATTENDED) in audits too; nothing waits for a reset.
+- Sample brief `references/briefs/security-audit.md`.
+- First live audit (fable, codex, opencode/Muse Spark on `tools/update_models.py`: 10 findings confirmed, 1.04M
+  tokens, 8m34s) found robustness bugs, now fixed: `update_models.py` refuses a models.dev answer missing a
+  provider or with no current free OpenCode model, reports nothing as newer when the current model has no release
+  date, and a model counts as free only when input and output cost are both zero (runtime too).
+
 ## 0.2.1 (2026-10-15)
 
 - The opt-in OpenCode seat prefers free **Muse Spark** (Meta) when OpenCode offers it, before the newest free
