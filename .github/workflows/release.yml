@@ -1,0 +1,41 @@
+name: Release
+
+# Push a vX.Y.Z tag to publish that version to npm. Auth is npm trusted publishing (GitHub OIDC), no token.
+# workflow_dispatch publishes the version at the chosen ref, for a tag pushed before this workflow existed.
+
+on:
+  push: { tags: ["v*"] }
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write   # npm trusted publishing + provenance
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Tests
+        run: python -m unittest discover -s tests
+      - name: Verify tag matches package version
+        if: github.ref_type == 'tag'
+        run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - name: Publish unless this version is already on npm
+        run: |
+          v=$(node -p 'require("./package.json").version')
+          if npm view "llm-roundtable@$v" version >/dev/null 2>&1; then
+            echo "already published"; else npm publish --provenance --access public; fi
+      - name: GitHub release
+        if: github.ref_type == 'tag'
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}
