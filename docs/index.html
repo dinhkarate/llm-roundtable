@@ -39,7 +39,9 @@
     {"@type": "Question", "name": "How is the verdict computed?",
      "acceptedAnswer": {"@type": "Answer", "text": "Each valid ballot counts seat weight x (0.5 + 0.5 x mean peer evidence rating, 0-2). Ballots without a sourced FACT or INFERENCE do not count. The highest score wins; ties go to the Fable seat; a tie without Fable or fewer than two valid ballots falls back to the user's safe default option."}},
     {"@type": "Question", "name": "How is it different from karpathy/llm-council?",
-     "acceptedAnswer": {"@type": "Answer", "text": "karpathy/llm-council is a web app on OpenRouter where a chairman model writes the final answer. llm-roundtable runs headless from your coding agent, uses CLI subscriptions across four vendors (five with the opt-in OpenCode seat), requires evidence for every vote, and decides by a weighted vote."}}
+     "acceptedAnswer": {"@type": "Answer", "text": "karpathy/llm-council is a web app on OpenRouter where a chairman model writes the final answer. llm-roundtable runs headless from your coding agent, uses CLI subscriptions across four vendors (five with the opt-in OpenCode seat), requires evidence for every vote, and decides by a weighted vote."}},
+    {"@type": "Question", "name": "Can llm-roundtable audit code?",
+     "acceptedAnswer": {"@type": "Answer", "text": "Yes. --mode audit has every seat report findings with file:line evidence, merges duplicates, then has every seat verify every finding anonymously; a finding is confirmed when at least two seats support it and they outweigh the rejections. The output is findings.json and VERDICT: FINDINGS, CLEAN or NONE."}}
   ]
 }
 </script>
@@ -85,6 +87,7 @@
 <pre><code>npx skills add dinhkarate/llm-roundtable --skill llm-roundtable   # Agent Skill for every agent on this machine
 npx llm-roundtable doctor --probe                                  # which seats can sit
 npx llm-roundtable run --brief brief.md --default C                # last line: VERDICT: B (council)
+npx llm-roundtable run --brief audit.md --mode audit --workspace . # VERDICT: FINDINGS | CLEAN, plus findings.json
 
 # Claude Code only, optional: the same skill as a plugin (pick one install path, not both)
 /plugin marketplace add dinhkarate/llm-roundtable
@@ -96,6 +99,7 @@ npx llm-roundtable run --brief brief.md --default C                # last line: 
     <li><b>Evidence or it does not count.</b> Every ballot needs a sourced FACT or INFERENCE; peers rate it 0-2 and the rating scales the vote.</li>
     <li><b>Anonymous cross-examination.</b> Round 2 shows positions as M1..Mn, shuffled, in fresh sessions, which reduces sycophancy and self-bias (ACL 2026).</li>
     <li><b>A vote, not a chairman.</b> Most of the benefit of multi-agent debate comes from voting (Debate or Vote, NeurIPS 2025), so the verdict is arithmetic.</li>
+    <li><b>Audits, not only votes.</b> <code>--mode audit</code>: every seat looks for problems with file:line evidence, duplicates are merged, and every seat verifies every finding anonymously. A finding counts when two seats back it; the result is findings.json.</li>
     <li><b>Never blocks.</b> One-level fallback per model family, then UNATTENDED; ties go to the Fable seat; undecided falls back to your safe default.</li>
     <li><b>Read-only and sandboxed by default.</b> Publishing tools removed, each seat keeps only its own CLI's credentials, workspace fingerprinted after every round. The opt-in OpenCode seat is not sandboxed.</li>
   </ul>
@@ -115,6 +119,8 @@ npx llm-roundtable run --brief brief.md --default C                # last line: 
     <dd>About 10 model calls (5 seats × 2 rounds), typically 5-20 minutes. One blind round halves it.</dd>
     <dt>Can it review a pull request?</dt>
     <dd>Yes: <code>--mode review --workspace .</code> gives read-only repo access and the options become APPROVE / CHANGES / REJECT.</dd>
+    <dt>Can it audit code?</dt>
+    <dd>Yes: <code>--mode audit --workspace .</code> with a brief that sets the scope. Each seat reports findings with evidence, the script merges duplicates, then every seat checks every finding without knowing who reported it (its own findings are excluded). Confirmed findings land in findings.json.</dd>
     <dt>Will it change my code?</dt>
     <dd>Not with the default seats: they are read-only, and a changed workspace marks the run TAINTED with no verdict. The opt-in OpenCode seat is not sandboxed.</dd>
   </dl>
