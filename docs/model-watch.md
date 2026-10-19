@@ -10,4 +10,4 @@ only bumped by hand, after a real CLI call (`roundtable.py doctor --probe`). Edi
 | codex | `gpt-6.1-sol` | 2026-09-29 | none |
 | grok | `grok-4.7` | 2026-09-21 | none |
 | gemini | `gemini-3.8-flash-high` | 2026-09-02 | none |
-| opencode | `opencode/muse-spark-1.3-contributor-free` | 2026-09-02 | auto: newest free model matching muse-spark; fallback opencode/cat-jam-free |
+| opencode | `opencode/nemotron-3.5-super-vl-free` | 2026-10-15 | auto: newest free model matching muse-spark; fallback opencode/beam-free |
